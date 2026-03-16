@@ -3,5 +3,6 @@ COMP3334 Project
 ## Team Members
 DU Haoqian  
 Feng Luquan 
-YANG Shu  
+  YANG Shu  
 DU Haoyang  
+Liu Chen
