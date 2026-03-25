@@ -1,0 +1,16 @@
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / 'data'
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATA_DIR / 'im_phase1.db'
+
+SESSION_TTL_SECONDS = 60 * 60 * 12  # 12 hours
+LOGIN_CHALLENGE_TTL_SECONDS = 5 * 60
+DEFAULT_MESSAGE_PAGE_SIZE = 20
+MAX_MESSAGE_PAGE_SIZE = 100
+MAX_MESSAGE_LENGTH = 4000
+FRIEND_REQUEST_RATE_LIMIT = (10, 60)  # 10 per 60 seconds
+REGISTER_RATE_LIMIT = (10, 60)
+LOGIN_RATE_LIMIT = (20, 60)
+MESSAGE_RETENTION_DAYS = 7
