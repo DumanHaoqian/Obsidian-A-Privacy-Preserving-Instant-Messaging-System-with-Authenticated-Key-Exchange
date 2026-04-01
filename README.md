@@ -1,81 +1,259 @@
-# COMP3334 Secure IM - Phase 1 Prototype with E2EE V1
+# COMP3334 Secure IM Prototype with E2EE V1
 
-This project gives you a **working client-server IM skeleton** for the first implementation milestone:
+This repository contains a runnable client-server instant messaging prototype for the COMP3334 secure IM project.
 
-- registration
-- password + OTP login
-- session tokens
-- end-to-end encrypted message bodies (single-device V1)
-- friend requests (send / accept / decline / cancel)
-- contacts list
-- online message forwarding through WebSocket
-- offline message queue + replay on reconnect
-- conversation list ordered by recent activity
-- unread counters
-- explicit `delivered` acknowledgement from recipient client
+Current scope:
 
-It is intentionally a **Phase 1 prototype**.
-It now implements a **practical E2EE V1**: the client generates a long-term X25519 identity key, encrypts messages before upload, and decrypts locally after fetch/push. The server stores ciphertext envelopes instead of plaintext.
-It still does **not yet** implement replay resistance, formal fingerprint verification UX, Signal-style prekeys / double ratchet, or self-destruct TTL.
+- 1:1 private messaging only
+- CLI client (`client/cli.py`)
+- FastAPI server (`server/main.py`)
+- SQLite storage (`data/im_phase1.db`)
+- single-device end-to-end encrypted messaging for the default CLI flow
 
-## Folder layout
+The current CLI encrypts message bodies locally before upload and decrypts them locally after pull/push.
+For `e2ee_text` messages the server stores ciphertext envelopes, not plaintext.
+
+This is still a prototype, not a full modern messaging protocol.
+It does not yet implement replay protection, timed self-destruct messages, TLS, formal fingerprint verification UI, or multi-device secure sessions.
+
+## Companion documents
+
+- `USER_MENU.md`: command-by-command CLI usage guide
+- `E2EE_IMPLEMENTATION.md`: detailed notes about the current E2EE V1 design
+
+## Repository layout
 
 ```text
-im_phase1_system/
-├── client/
-│   ├── api_client.py
-│   ├── cli.py
-│   ├── otp.py
-│   ├── state.py
-│   └── ws_client.py
-├── server/
-│   ├── config.py
-│   ├── db.py
-│   ├── main.py
-│   ├── rate_limit.py
-│   ├── schemas.py
-│   ├── security.py
-│   └── ws_manager.py
-├── data/
-│   └── im_phase1.db         # created automatically
-├── requirements.txt
-└── README.md
+Code/
+|-- client/
+|   |-- api_client.py
+|   |-- cli.py
+|   |-- client_state.json
+|   |-- e2ee_client.py
+|   |-- otp.py
+|   |-- state.py
+|   `-- ws_client.py
+|-- data/
+|   `-- im_phase1.db
+|-- server/
+|   |-- config.py
+|   |-- db.py
+|   |-- main.py
+|   |-- rate_limit.py
+|   |-- schemas.py
+|   |-- security.py
+|   `-- ws_manager.py
+|-- shared/
+|   `-- e2ee.py
+|-- E2EE_IMPLEMENTATION.md
+|-- README.md
+|-- USER_MENU.md
+`-- requirements.txt
 ```
 
-## Design choices in this prototype
+## What the current code actually implements
 
-### Delivered semantics
-This prototype uses **Option B semantics** for delivery status:
+### Accounts and authentication
 
-- `sent` means the sender successfully submitted the message to the server.
-- `delivered` means the **recipient client** explicitly called `/messages/ack` after receiving the message.
+- user registration with unique usernames
+- Argon2 password hashing
+- TOTP-based second factor
+- two-step login: `/login/password` -> `/login/otp`
+- bearer-token sessions with a 12-hour TTL
+- logout by revoking the current token
 
-This is stronger than “server queued it”.
+Important demo behavior:
 
-### OTP
-To keep the demo usable from one laptop, the register response returns the OTP secret and the CLI stores it locally in `client/client_state.json`.
-That is convenient for demonstration, but for a production build you would provision the secret into an authenticator app and avoid storing it like this.
+- `/register` returns the OTP secret and OTP URI
+- the CLI stores OTP secrets locally in `client/client_state.json`
+- on later `login`, the CLI auto-generates the OTP code from the stored secret if it exists
 
-### Identity keys
-The database contains an `identity_public_keys` table and the server exposes active routes:
+### Contacts and requests
 
-- `POST /identity-key`
-- `GET /identity-key/{username}`
+- send friend request
+- list incoming and outgoing pending requests
+- accept or decline a received request
+- cancel a sent pending request
+- contacts list after acceptance
+- contacts-only messaging by default
 
-The CLI now uses these routes to publish real X25519 identity public keys and to fetch peer keys for TOFU-based E2EE.
+### Messaging and conversation flow
+
+- send a 1:1 message to a contact
+- WebSocket push for online recipients
+- offline store-and-forward through the database
+- explicit `delivered` acknowledgement from the recipient client
+- conversation list ordered by recent activity
+- unread counters per conversation
+- pull message history with paging support
+- mark messages as read
+
+Additional implemented behavior:
+
+- self-messaging is rejected
+- message history includes `status`, `delivered_at`, `is_read`, and `read_at`
+- encrypted conversation previews are shown as `[encrypted]`
+- plaintext previews are truncated to 60 characters in `/conversations`
+
+### E2EE V1
+
+The default CLI `send` flow is end-to-end encrypted.
+
+Implemented pieces:
+
+- each local user gets a long-term X25519 identity keypair
+- private keys stay in the local client state file
+- public keys are uploaded to the server through `/identity-key`
+- the client fetches peer public keys through `/identity-key/{username}`
+- the client encrypts locally before `/messages/send`
+- the client decrypts locally when handling WebSocket pushes or `open`
+- the client stores trusted peer keys locally using TOFU (Trust On First Use)
+- if a trusted peer key changes, sending is refused and decryption can be blocked
+
+Important boundary:
+
+- the server still knows sender, receiver, timestamps, contact graph, delivery/read status, and message sizes
+- only the message body moves to ciphertext for `e2ee_text`
+
+## E2EE V1 technical details
+
+### Cryptographic choices
+
+The shared E2EE implementation lives in `shared/e2ee.py`.
+
+- key agreement: X25519
+- KDF: HKDF-SHA256
+- content encryption: AES-GCM
+- public-key fingerprint: SHA-256 of the raw public key bytes
+- message type for encrypted chat: `e2ee_text`
+- default device id used by the prototype: `cli-device-1`
+
+### Envelope format
+
+Encrypted messages are stored and transmitted as a JSON string with this shape:
+
+```json
+{
+  "alg": "x25519-hkdf-sha256-aesgcm",
+  "ciphertext": "...",
+  "nonce": "...",
+  "salt": "...",
+  "sender_device_id": "cli-device-1",
+  "v": 1
+}
+```
+
+The authenticated associated data (AAD) currently binds:
+
+- `from_username`
+- `to_username`
+- `sender_device_id`
+- `message_type`
+
+This means tampering with those fields is detected during decryption.
+
+### Trust model in the current client
+
+The current CLI uses TOFU:
+
+- on first send to a peer, it fetches that peer's active public key and saves it under `trusted_peer_keys`
+- on first decrypt from an unseen peer, it does the same
+- later sends compare the server's current key against the stored trusted key
+- if the key has changed, the client raises a trust error and refuses to continue
+
+What exists today:
+
+- fingerprints are computed and printed in some CLI flows
+- key changes are detected
+- the client refuses to silently continue after a key mismatch
+
+What does not exist yet:
+
+- no dedicated "mark verified" command
+- no dedicated fingerprint comparison UI
+- no trust-reset command in the CLI
+- no multi-device trust management
+
+### How the current encrypted flow works
+
+1. User logs in.
+2. The CLI ensures a local identity keypair exists for that username.
+3. The CLI republishes the local public key through `/identity-key`.
+4. On `send <username> <message>`, the CLI fetches or checks the trusted peer key.
+5. The CLI encrypts the plaintext locally and uploads the JSON envelope as `message_type=e2ee_text`.
+6. The server stores the envelope in `messages.content`.
+7. The recipient CLI decrypts locally when it receives a push or opens history.
+
+Important implementation detail:
+
+- the server API still accepts plaintext `message_type='text'`
+- the current CLI `send` command always sends `e2ee_text`
+
+## Local state and stored data
+
+### Client state
+
+The CLI persists local state in `client/client_state.json`.
+
+Current keys in that file:
+
+- `known_otp_secrets`
+- `access_token`
+- `username`
+- `device_keys`
+- `trusted_peer_keys`
+
+This means the local state file currently holds sensitive data in plaintext JSON, including:
+
+- OTP secrets
+- bearer tokens
+- private identity keys
+- trusted peer public keys
+
+Logging out clears the current `access_token` and `username`, but it does not delete stored OTP secrets, device keys, or trusted peer keys.
+
+All CLI processes launched from the same checkout read and write the same `client/client_state.json`.
+
+### Database
+
+The server uses SQLite at `data/im_phase1.db`.
+
+Current tables:
+
+- `users`
+- `otp_secrets`
+- `sessions`
+- `login_challenges`
+- `identity_public_keys`
+- `friend_requests`
+- `contacts`
+- `blocks`
+- `conversations`
+- `messages`
+- `delivery_receipts`
+
+Important storage facts:
+
+- encrypted message envelopes are stored in `messages.content`
+- plaintext API messages, if used, are also stored in `messages.content`
+- `blocks` exists in the schema and is enforced by message/request checks
+- there is no exposed block/unblock CLI or API route in the current code
+
+## Limits and defaults
+
+- session TTL: 12 hours
+- login challenge TTL: 5 minutes
+- default message page size: 20
+- max message page size: 100
+- max plaintext message length in the CLI: 4000 characters
+- max encrypted message payload length on the server: 16000 characters
+- registration rate limit: 10 requests / 60 seconds
+- login rate limit: 20 requests / 60 seconds
+- friend-request rate limit: 10 requests / 60 seconds
 
 ## How to run
 
 ### 1. Create a virtual environment
-
-#### Ubuntu / macOS
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-```
 
 #### Windows PowerShell
 
@@ -86,75 +264,101 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 2. Start the server
+#### Ubuntu / macOS
 
-From the project root:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 2. Optional: reset local demo state
+
+If you want a clean run, remove the database and client state first:
+
+#### Windows PowerShell
+
+```powershell
+Remove-Item .\data\im_phase1.db -Force -ErrorAction SilentlyContinue
+Remove-Item .\client\client_state.json -Force -ErrorAction SilentlyContinue
+```
+
+#### Ubuntu / macOS
+
+```bash
+rm -f data/im_phase1.db client/client_state.json
+```
+
+### 3. Start the server
 
 ```bash
 uvicorn server.main:app --reload
 ```
 
-The server runs at:
+Default server URL:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-### 3. Start one or more CLI clients
-
-Open a new terminal for each client:
+### 4. Start the CLI
 
 ```bash
 python client/cli.py http://127.0.0.1:8000
 ```
 
-## Demo flow
+## Basic demo flow
 
-In terminal A:
+Terminal A:
 
 ```text
 register alice StrongPass123
 login alice StrongPass123
 ```
 
-In terminal B:
+Terminal B:
 
 ```text
 register bob StrongPass123
 login bob StrongPass123
 ```
 
-Then in terminal A:
+Terminal A:
 
 ```text
 send-request bob
 ```
 
-In terminal B:
+Terminal B:
 
 ```text
 pending
 respond 1 accept
 ```
 
-Then in terminal A:
+Terminal A:
 
 ```text
 send bob hello bob
 conversations
 ```
 
-In terminal B:
+Terminal B:
 
 ```text
 conversations
 open 1
 ```
 
-If Bob is online, Bob will receive a WebSocket push immediately.
-If Bob is offline, the server will queue the message and replay it when Bob reconnects.
+Expected high-level result:
 
-## Useful CLI commands
+- Alice's CLI prints local/peer fingerprint info after send
+- Bob sees plaintext after local decryption
+- the server stores the encrypted envelope for the chat message
+- the conversation list shows `[encrypted]` as the preview for the last encrypted message
+
+## CLI commands
 
 ```text
 help
@@ -175,68 +379,115 @@ store-dev-key
 exit
 ```
 
-## API summary
+Notes:
+
+- `login` also ensures and republishes the local identity key
+- `send` always encrypts locally first
+- `open` pulls messages and requests `mark_read=true`
+- `store-dev-key` republishes the current local public key and prints the local fingerprint
+
+## HTTP API summary
 
 ### Auth
+
 - `POST /register`
 - `POST /login/password`
 - `POST /login/otp`
 - `POST /logout`
 - `GET /me`
 
-### Identity placeholder
+### Identity keys
+
 - `POST /identity-key`
 - `GET /identity-key/{username}`
 
-### Friends / contacts
+### Friend requests and contacts
+
 - `POST /friend-request/send`
 - `GET /friend-request/pending`
 - `POST /friend-request/respond`
 - `POST /friend-request/cancel`
 - `GET /contacts`
 
-### Messages / conversations
+### Messages and conversations
+
 - `POST /messages/send`
 - `POST /messages/ack`
 - `GET /messages/pull`
-- `GET /conversations`
 - `POST /conversations/{conversation_id}/mark-read`
+- `GET /conversations`
 
-### Realtime
-- `GET /ws?token=<access_token>` using WebSocket
+Useful API details:
 
-## What is already good enough for your report
+- `/messages/send` accepts `message_type` of `text` or `e2ee_text`
+- `/messages/pull` supports `conversation_id`, `limit`, `before_id`, and `mark_read`
 
-You can already claim and demonstrate:
+### WebSocket
 
-- client-server split
-- session management
-- password hashing with Argon2
-- OTP second factor
-- client-side E2EE for new chat messages
-- friend request lifecycle
-- default anti-spam: only contacts can send chat messages
-- explicit delivery acknowledgements
-- offline store-and-forward behavior
-- conversation list and unread counters
-- basic abuse controls via in-memory rate limiting
+- `GET /ws?token=<access_token>`
 
-## What you should build next
+Server-side pushed events currently used by the system:
 
-1. Add replay protection and duplicate detection.
-2. Add fingerprint verification UI and safer key-change recovery.
-3. Move from long-term static-key E2EE V1 to a prekey/session protocol.
-4. Add forward secrecy and post-compromise recovery.
-5. Add TTL/self-destruct messages and cleanup.
-6. Add TLS for deployment.
+- `system`
+- `new_message`
+- `message_ack`
+- `friend_request_update`
+- `pong` (reply to client `ping`)
 
-## Notes and limitations
+## Status against the current course requirements
 
-- This prototype is for local development and coursework demonstration.
-- The server still sees metadata such as usernames, timestamps, contact graph, delivery status, and read status.
-- The server stores ciphertext envelopes for new encrypted chat messages, not plaintext.
-- The current E2EE design is single-device and TOFU-based, not a full Signal-class protocol.
-- The OTP bootstrap flow is demo-friendly, not production-grade.
-- The rate limiter is in-memory and process-local.
-- TLS is not configured in this local prototype.
+### Implemented
 
+- registration with password hashing and basic input validation
+- password + OTP login
+- logout / token revocation
+- long-term per-user local identity keypair generation
+- public identity key upload and lookup
+- single-device E2EE message encryption/decryption for the CLI flow
+- authenticated encryption with metadata binding
+- friend request send / accept / decline / cancel
+- contacts-only messaging by default
+- sent / delivered status, with delivered triggered by recipient client acknowledgement
+- offline store-and-forward for the current encrypted CLI flow
+- conversation list, unread counters, and basic paging
+
+### Partially implemented
+
+- fingerprint visibility: fingerprints are shown in selected CLI flows, but there is no dedicated verification workflow
+- key-change handling: trust mismatches are detected and blocked, but there is no user-facing trust reset flow
+- blocking/removing: the schema and enforcement hooks exist, but there is no block/unblock/remove contact CLI or API surface
+
+### Not implemented yet
+
+- replay protection / duplicate detection
+- timed self-destruct messages / TTL metadata
+- automatic client-side deletion of expired messages
+- server-side expiry cleanup for queued ciphertext
+- retention cleanup based on `MESSAGE_RETENTION_DAYS`
+- TLS for client-server transport
+- encrypted local storage / OS keychain integration
+- prekeys, double ratchet, forward secrecy, or post-compromise recovery
+- multi-device session support
+
+## Current limitations and important facts
+
+- The current E2EE design is static-key, TOFU-based, and single-device.
+- If a peer has multiple active identity keys and none matches `cli-device-1`, the client refuses because the prototype only supports one device.
+- Replay protection is not implemented. Messages are replayed from the server while `delivered_at` is still `NULL`.
+- `delivered` means the recipient client called `/messages/ack` after receipt. It is not a read receipt.
+- delivery acknowledgements are server-visible control messages; they are not E2EE payloads
+- In the current CLI, delivery ack is still attempted after push reception even if decryption renders an error placeholder.
+- `open` marks returned unread messages as read by default.
+- The WebSocket listener retries on connection errors and clears the local session if reconnect fails with authentication errors.
+- `MESSAGE_RETENTION_DAYS = 7` exists in config but is not currently enforced anywhere in the server logic.
+- There is no TLS configuration in this repository. Use `http://` / `ws://` for local development only.
+
+## What to build next
+
+The most important missing items for the course project are:
+
+1. replay protection / duplicate detection
+2. timed self-destruct messages and expiry cleanup
+3. proper fingerprint verification UX and trust-reset workflow
+4. block/unblock and contact removal management
+5. TLS for transport security
