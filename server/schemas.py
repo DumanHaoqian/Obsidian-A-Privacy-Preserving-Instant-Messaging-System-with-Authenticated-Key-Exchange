@@ -73,8 +73,8 @@ class FriendRequestCancelRequest(BaseModel):
 
 class MessageSendRequest(BaseModel):
     to_username: str
-    content: str = Field(min_length=1, max_length=4000)
-    message_type: Literal['text'] = 'text'
+    content: str = Field(min_length=1, max_length=16000)
+    message_type: Literal['text', 'e2ee_text'] = 'text'
 
 
 class IdentityKeyUpsertRequest(BaseModel):

@@ -1,10 +1,11 @@
-# COMP3334 Secure IM - Phase 1 Runnable Prototype
+# COMP3334 Secure IM - Phase 1 Prototype with E2EE V1
 
 This project gives you a **working client-server IM skeleton** for the first implementation milestone:
 
 - registration
 - password + OTP login
 - session tokens
+- end-to-end encrypted message bodies (single-device V1)
 - friend requests (send / accept / decline / cancel)
 - contacts list
 - online message forwarding through WebSocket
@@ -14,8 +15,8 @@ This project gives you a **working client-server IM skeleton** for the first imp
 - explicit `delivered` acknowledgement from recipient client
 
 It is intentionally a **Phase 1 prototype**.
-It does **not yet** implement full E2EE, AAD, replay resistance, fingerprint verification, key change warnings, or self-destruct TTL.
-Those are the next layers you will build on top of this skeleton.
+It now implements a **practical E2EE V1**: the client generates a long-term X25519 identity key, encrypts messages before upload, and decrypts locally after fetch/push. The server stores ciphertext envelopes instead of plaintext.
+It still does **not yet** implement replay resistance, formal fingerprint verification UX, Signal-style prekeys / double ratchet, or self-destruct TTL.
 
 ## Folder layout
 
@@ -56,12 +57,12 @@ To keep the demo usable from one laptop, the register response returns the OTP s
 That is convenient for demonstration, but for a production build you would provision the secret into an authenticator app and avoid storing it like this.
 
 ### Identity keys
-The database already contains an `identity_public_keys` table and the server exposes placeholder routes:
+The database contains an `identity_public_keys` table and the server exposes active routes:
 
 - `POST /identity-key`
 - `GET /identity-key/{username}`
 
-That prepares the skeleton for the later E2EE phase.
+The CLI now uses these routes to publish real X25519 identity public keys and to fetch peer keys for TOFU-based E2EE.
 
 ## How to run
 
@@ -114,7 +115,6 @@ In terminal A:
 ```text
 register alice StrongPass123
 login alice StrongPass123
-store-dev-key
 ```
 
 In terminal B:
@@ -122,7 +122,6 @@ In terminal B:
 ```text
 register bob StrongPass123
 login bob StrongPass123
-store-dev-key
 ```
 
 Then in terminal A:
@@ -214,6 +213,7 @@ You can already claim and demonstrate:
 - session management
 - password hashing with Argon2
 - OTP second factor
+- client-side E2EE for new chat messages
 - friend request lifecycle
 - default anti-spam: only contacts can send chat messages
 - explicit delivery acknowledgements
@@ -223,19 +223,19 @@ You can already claim and demonstrate:
 
 ## What you should build next
 
-1. Replace `content` with ciphertext.
-2. Add client-side identity keypair generation and persistent private-key storage.
-3. Implement secure session establishment.
-4. Add AEAD with authenticated metadata.
-5. Add replay protection and duplicate detection.
-6. Add key change warning and verification UI.
-7. Add TTL/self-destruct messages and cleanup.
-8. Add TLS for deployment.
+1. Add replay protection and duplicate detection.
+2. Add fingerprint verification UI and safer key-change recovery.
+3. Move from long-term static-key E2EE V1 to a prekey/session protocol.
+4. Add forward secrecy and post-compromise recovery.
+5. Add TTL/self-destruct messages and cleanup.
+6. Add TLS for deployment.
 
 ## Notes and limitations
 
 - This prototype is for local development and coursework demonstration.
-- The server currently stores message plaintext because E2EE is not added yet.
+- The server still sees metadata such as usernames, timestamps, contact graph, delivery status, and read status.
+- The server stores ciphertext envelopes for new encrypted chat messages, not plaintext.
+- The current E2EE design is single-device and TOFU-based, not a full Signal-class protocol.
 - The OTP bootstrap flow is demo-friendly, not production-grade.
 - The rate limiter is in-memory and process-local.
 - TLS is not configured in this local prototype.

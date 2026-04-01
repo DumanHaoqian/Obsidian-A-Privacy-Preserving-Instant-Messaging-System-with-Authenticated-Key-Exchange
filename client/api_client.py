@@ -52,6 +52,9 @@ class ApiClient:
     def store_identity_key(self, device_id: str, public_key: str) -> Any:
         return self._handle(self.http.post('/identity-key', json={'device_id': device_id, 'public_key': public_key}, headers=self._headers()))
 
+    def get_identity_keys(self, username: str) -> Any:
+        return self._handle(self.http.get(f'/identity-key/{username}', headers=self._headers()))
+
     def send_friend_request(self, target_username: str) -> Any:
         return self._handle(self.http.post('/friend-request/send', json={'target_username': target_username}, headers=self._headers()))
 
@@ -67,8 +70,9 @@ class ApiClient:
     def contacts(self) -> Any:
         return self._handle(self.http.get('/contacts', headers=self._headers()))
 
-    def send_message(self, to_username: str, content: str) -> Any:
-        return self._handle(self.http.post('/messages/send', json={'to_username': to_username, 'content': content}, headers=self._headers()))
+    def send_message(self, to_username: str, content: str, message_type: str = 'text') -> Any:
+        payload = {'to_username': to_username, 'content': content, 'message_type': message_type}
+        return self._handle(self.http.post('/messages/send', json=payload, headers=self._headers()))
 
     def ack_message(self, message_id: int) -> Any:
         return self._handle(self.http.post('/messages/ack', json={'message_id': message_id, 'status': 'delivered'}, headers=self._headers()))

@@ -13,6 +13,7 @@ from .config import (
     FRIEND_REQUEST_RATE_LIMIT,
     LOGIN_CHALLENGE_TTL_SECONDS,
     LOGIN_RATE_LIMIT,
+    MAX_PLAINTEXT_MESSAGE_LENGTH,
     MAX_MESSAGE_LENGTH,
     MAX_MESSAGE_PAGE_SIZE,
     REGISTER_RATE_LIMIT,
@@ -476,7 +477,8 @@ def contacts(current_user: sqlite3.Row = Depends(get_current_user)) -> dict[str,
 # ------------------------------
 @app.post('/messages/send')
 async def messages_send(payload: MessageSendRequest, current_user: sqlite3.Row = Depends(get_current_user)) -> dict[str, Any]:
-    if len(payload.content) > MAX_MESSAGE_LENGTH:
+    message_size_limit = MAX_PLAINTEXT_MESSAGE_LENGTH if payload.message_type == 'text' else MAX_MESSAGE_LENGTH
+    if len(payload.content) > message_size_limit:
         raise HTTPException(status_code=400, detail='message too large')
 
     with db_cursor(commit=True) as cur:
@@ -669,10 +671,10 @@ def conversations(current_user: sqlite3.Row = Depends(get_current_user)) -> dict
             peer = fetch_user_by_id(cur, row['peer_id'])
             last_message_preview = ''
             if row['last_message_id']:
-                cur.execute('SELECT content FROM messages WHERE id = ?', (row['last_message_id'],))
+                cur.execute('SELECT content, message_type FROM messages WHERE id = ?', (row['last_message_id'],))
                 msg = cur.fetchone()
                 if msg:
-                    last_message_preview = msg['content'][:60]
+                    last_message_preview = '[encrypted]' if msg['message_type'] == 'e2ee_text' else msg['content'][:60]
             cur.execute(
                 'SELECT COUNT(*) AS unread_count FROM messages WHERE conversation_id = ? AND receiver_id = ? AND is_read = 0',
                 (row['id'], current_user['id']),

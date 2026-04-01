@@ -1,11 +1,46 @@
 {
-  "access_token": "jkQ1YBTit01c8BW_eu_vVROB_Xs48XUVOpHXSjQO5GA",
-  "known_otp_secrets": {
-    "bob123": "T232QCC763GKC756DGEVSDLAXYJFRCU3",
-    "haoqian": "HOQ52XFJBXD4TFJTWF5RSNJG4WDUEDQE",
-    "haoqian3": "XH7RFYKDDRZ5GRTCLLGVDHVIWT5XAL6N",
-    "liuchen": "2EDD7W36AW2XS2LJSMHKYSWK22SB7WDQ",
-    "xulu": "S7QGZXUAHX5V4QQKAZHSS2XHWF7YG7F3"
+  "access_token": "lWwzOUe4rHRxBA-8Le5BVm-XkYI8r1Z2W2fLBpMdKPY",
+  "device_keys": {
+    "frank": {
+      "device_id": "cli-device-1",
+      "fingerprint": "45330e3ae8b4b84c068580ee8d327601313a3e7bab571b44c04fb7717e019aa8",
+      "private_key": "8Pv/K8a2hovfQwo5/Om3P9dszB7PqIqfA+Hge+1bnW0=",
+      "public_key": "a/Iu+5y4Zg3FsTgmcy6nwI0GrN0nC+e7wD0/cJscWQY="
+    },
+    "nicco": {
+      "device_id": "cli-device-1",
+      "fingerprint": "bef63612121bc64ad434ed6a0847512f0de513baebf926dd13e55b3151896866",
+      "private_key": "8AXXXfNI+w2VGBrN50g8QLBCpGUt7CIV1ckAdG0cZFQ=",
+      "public_key": "KzZm5bX+K7Ge5JG5K03AnehzNwkSP/uTWhaEpoFtRC4="
+    }
   },
-  "username": "liuchen"
+  "known_otp_secrets": {
+    "frank": "L5PW3XYHZ4QHPA3NYEFLA446JB2VZU62",
+    "nicco": "SSFIYURHQ4DTNGXP2FTOF2OP6RDU4MM7"
+  },
+  "trusted_peer_keys": {
+    "frank": {
+      "nicco": {
+        "device_id": "cli-device-1",
+        "fingerprint": "bef63612121bc64ad434ed6a0847512f0de513baebf926dd13e55b3151896866",
+        "public_key": "KzZm5bX+K7Ge5JG5K03AnehzNwkSP/uTWhaEpoFtRC4=",
+        "trusted_at": "2026-04-01T05:45:03.780522+00:00"
+      }
+    },
+    "nicco": {
+      "flq": {
+        "device_id": "cli-device-1",
+        "fingerprint": "58203cf23ce9dd23acbdd001d217f1fb6afbc70cb921caf2c9d90f993776e837",
+        "public_key": "xSev3DWpZeRFQzzQX5OOdas9tAPNeWnWlcOSq+SgSgM=",
+        "trusted_at": "2026-04-01T05:03:23.222338+00:00"
+      },
+      "frank": {
+        "device_id": "cli-device-1",
+        "fingerprint": "45330e3ae8b4b84c068580ee8d327601313a3e7bab571b44c04fb7717e019aa8",
+        "public_key": "a/Iu+5y4Zg3FsTgmcy6nwI0GrN0nC+e7wD0/cJscWQY=",
+        "trusted_at": "2026-04-01T05:45:03.802218+00:00"
+      }
+    }
+  },
+  "username": "frank"
 }
