@@ -20,7 +20,6 @@
 - 前向保密轮换
 - 指纹人工比对 UI
 - 自动恢复信任迁移
-- 重放保护
 
 ## 2. 这次新增或修改了哪些文件
 
@@ -311,9 +310,10 @@
   "alg": "x25519-hkdf-sha256-aesgcm",
   "ciphertext": "...",
   "nonce": "...",
+  "replay_token": "...",
   "salt": "...",
   "sender_device_id": "cli-device-1",
-  "v": 1
+  "v": 2
 }
 ```
 
@@ -325,6 +325,9 @@
   - 算法标识
 - `sender_device_id`
   - 发送方设备 ID
+- `replay_token`
+  - 发送端本地生成的随机 token
+  - 接收端用它做 replay protection / duplicate detection
 - `salt`
   - HKDF salt
 - `nonce`
@@ -340,6 +343,7 @@
 - `to_username`
 - `sender_device_id`
 - `message_type`
+- `replay_token`（V2 envelope）
 
 这意味着如果服务端篡改这些字段之一，解密会失败。
 
@@ -623,6 +627,5 @@ send bob hello_again
 - 预密钥
 - 前向保密
 - 双棘轮
-- replay protection
 - 指纹人工验证
 - key change UX

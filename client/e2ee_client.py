@@ -1,17 +1,37 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from shared.e2ee import (
     DEFAULT_DEVICE_ID,
     DecryptionError,
+    E2EE_MESSAGE_TYPE,
     TrustError,
     decrypt_message,
     encrypt_message,
+    extract_replay_token,
     generate_identity_keypair,
     public_key_fingerprint,
 )
+
+
+MAX_REPLAY_CACHE_ENTRIES_PER_PEER = 2048
+
+
+class ReplayDetectedError(RuntimeError):
+    def __init__(self, message: str, *, canonical_message_id: Optional[int], current_message_id: Optional[int]) -> None:
+        super().__init__(message)
+        self.canonical_message_id = canonical_message_id
+        self.current_message_id = current_message_id
+
+
+class DuplicateDeliveryError(ReplayDetectedError):
+    pass
+
+
+class ReplayAttackError(ReplayDetectedError):
+    pass
 
 
 class ClientE2EEManager:
@@ -28,6 +48,9 @@ class ClientE2EEManager:
 
     def _trusted_peer_keys(self) -> dict[str, dict[str, dict[str, str]]]:
         return self.state.setdefault('trusted_peer_keys', {})
+
+    def _replay_cache(self) -> dict[str, dict[str, dict[str, dict[str, Any]]]]:
+        return self.state.setdefault('replay_cache', {})
 
     def ensure_local_identity(self, username: str) -> dict[str, str]:
         normalized_username = username.lower()
@@ -88,6 +111,79 @@ class ClientE2EEManager:
             'refusing to continue until trust is reset'
         )
 
+    def _peer_replay_cache(self, local_username: str, peer_username: str) -> dict[str, dict[str, Any]]:
+        return self._replay_cache().setdefault(local_username.lower(), {}).setdefault(peer_username.lower(), {})
+
+    def _trim_peer_replay_cache(self, cache: dict[str, dict[str, Any]]) -> None:
+        while len(cache) > MAX_REPLAY_CACHE_ENTRIES_PER_PEER:
+            oldest_token = min(
+                cache,
+                key=lambda token: (
+                    str(cache[token].get('last_seen_at') or cache[token].get('first_seen_at') or ''),
+                    int(cache[token].get('message_id') or 0),
+                ),
+            )
+            del cache[oldest_token]
+
+    def _record_replay_token(self, local_username: str, peer_username: str, replay_token: str, message_id: Optional[int]) -> None:
+        if message_id is None:
+            return
+        peer_cache = self._peer_replay_cache(local_username, peer_username)
+        now = self._utcnow()
+        existing = peer_cache.get(replay_token)
+        if existing is None:
+            peer_cache[replay_token] = {
+                'message_id': int(message_id),
+                'first_seen_at': now,
+                'last_seen_at': now,
+            }
+            self._trim_peer_replay_cache(peer_cache)
+            return
+        existing['last_seen_at'] = now
+
+    @staticmethod
+    def _message_id_from_payload(message_payload: dict[str, Any]) -> Optional[int]:
+        message_id = message_payload.get('message_id')
+        if isinstance(message_id, int):
+            return message_id
+        try:
+            return int(message_id)
+        except (TypeError, ValueError):
+            return None
+
+    def _classify_replay_token(
+        self,
+        *,
+        local_username: str,
+        peer_username: str,
+        replay_token: Optional[str],
+        message_id: Optional[int],
+        context: str,
+    ) -> None:
+        if replay_token is None or message_id is None:
+            return
+        peer_cache = self._peer_replay_cache(local_username, peer_username)
+        existing = peer_cache.get(replay_token)
+        if existing is None:
+            self._record_replay_token(local_username, peer_username, replay_token, message_id)
+            return
+
+        canonical_message_id = int(existing.get('message_id')) if existing.get('message_id') is not None else None
+        existing['last_seen_at'] = self._utcnow()
+        if canonical_message_id == message_id:
+            if context == 'push':
+                raise DuplicateDeliveryError(
+                    f'duplicate delivery detected for message {message_id}; already processed locally',
+                    canonical_message_id=canonical_message_id,
+                    current_message_id=message_id,
+                )
+            return
+        raise ReplayAttackError(
+            f'replay detected: token already seen in message {canonical_message_id}; current server message id {message_id}',
+            canonical_message_id=canonical_message_id,
+            current_message_id=message_id,
+        )
+
     def resolve_peer_for_send(self, local_username: str, peer_username: str) -> dict[str, str]:
         normalized_local = local_username.lower()
         normalized_peer = peer_username.lower()
@@ -112,7 +208,14 @@ class ClientE2EEManager:
         current = self._fetch_remote_identity(normalized_peer)
         return self._remember_trusted_peer(normalized_local, normalized_peer, current)
 
-    def encrypt_outbound_message(self, local_username: str, peer_username: str, plaintext: str) -> tuple[str, dict[str, str], dict[str, str]]:
+    def encrypt_outbound_message(
+        self,
+        local_username: str,
+        peer_username: str,
+        plaintext: str,
+        *,
+        ttl_seconds: Optional[int] = None,
+    ) -> tuple[str, dict[str, str], dict[str, str]]:
         identity = self.ensure_local_identity(local_username)
         trusted_peer = self.resolve_peer_for_send(local_username, peer_username)
         envelope = encrypt_message(
@@ -122,10 +225,11 @@ class ClientE2EEManager:
             from_username=local_username.lower(),
             to_username=peer_username.lower(),
             sender_device_id=identity['device_id'],
+            ttl_seconds=ttl_seconds,
         )
         return envelope, identity, trusted_peer
 
-    def decrypt_message_for_user(self, local_username: str, message_payload: dict[str, Any]) -> str:
+    def decrypt_message_for_user(self, local_username: str, message_payload: dict[str, Any], *, context: str = 'history') -> str:
         normalized_local = local_username.lower()
         identity = self.ensure_local_identity(normalized_local)
         from_username = str(message_payload.get('from_username', '')).lower()
@@ -137,8 +241,11 @@ class ClientE2EEManager:
         else:
             raise RuntimeError('encrypted message does not belong to the currently selected user')
         trusted_peer = self.resolve_peer_for_decrypt(normalized_local, peer_username)
+        replay_token: Optional[str] = None
+        if str(message_payload.get('message_type', '')) == E2EE_MESSAGE_TYPE:
+            replay_token = extract_replay_token(str(message_payload.get('content', '')))
         try:
-            return decrypt_message(
+            plaintext = decrypt_message(
                 str(message_payload.get('content', '')),
                 local_private_key_b64=identity['private_key'],
                 peer_public_key_b64=trusted_peer['public_key'],
@@ -154,3 +261,11 @@ class ClientE2EEManager:
             if current and trusted_peer['public_key'] != current['public_key']:
                 raise TrustError(self._describe_key_change(peer_username, trusted_peer, current)) from exc
             raise
+        self._classify_replay_token(
+            local_username=normalized_local,
+            peer_username=peer_username,
+            replay_token=replay_token,
+            message_id=self._message_id_from_payload(message_payload),
+            context=context,
+        )
+        return plaintext

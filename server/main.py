@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from shared.e2ee import EnvelopeError, extract_ttl_seconds, parse_envelope
 
 from .config import (
     DEFAULT_MESSAGE_PAGE_SIZE,
@@ -51,6 +54,9 @@ from .ws_manager import ConnectionManager
 app = FastAPI(title='COMP3334 IM Phase 1 Prototype', version='1.0.0')
 manager = ConnectionManager()
 rate_limiter = InMemoryRateLimiter()
+EXPIRY_CLEANUP_INTERVAL_SECONDS = 2.0
+_expiry_cleanup_lock = threading.Lock()
+_last_expiry_cleanup_monotonic = 0.0
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,6 +70,7 @@ app.add_middleware(
 @app.on_event('startup')
 def startup_event() -> None:
     init_db()
+    cleanup_expired_messages(force=True)
 
 
 # ------------------------------
@@ -162,6 +169,8 @@ def build_message_payload(cur: sqlite3.Cursor, message_id: int) -> dict[str, Any
         'to_username': row['receiver_username'],
         'content': row['content'],
         'message_type': row['message_type'],
+        'ttl_seconds': row['ttl_seconds'],
+        'expires_at': row['expires_at'],
         'status': row['status'],
         'is_offline_queued': bool(row['is_offline_queued']),
         'is_read': bool(row['is_read']),
@@ -174,6 +183,55 @@ def build_message_payload(cur: sqlite3.Cursor, message_id: int) -> dict[str, Any
 def notify_friend_request_change(request_id: int) -> None:
     # Helper retained for future expansion; notification is emitted inline in the endpoints.
     return None
+
+
+def cleanup_expired_messages(force: bool = False) -> int:
+    global _last_expiry_cleanup_monotonic
+    now_monotonic = time.monotonic()
+    if not force and now_monotonic - _last_expiry_cleanup_monotonic < EXPIRY_CLEANUP_INTERVAL_SECONDS:
+        return 0
+
+    with _expiry_cleanup_lock:
+        now_monotonic = time.monotonic()
+        if not force and now_monotonic - _last_expiry_cleanup_monotonic < EXPIRY_CLEANUP_INTERVAL_SECONDS:
+            return 0
+
+        now_iso = utcnow()
+        with db_cursor(commit=True) as cur:
+            cur.execute(
+                'SELECT id, conversation_id FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ?',
+                (now_iso,),
+            )
+            expired_rows = cur.fetchall()
+            if not expired_rows:
+                _last_expiry_cleanup_monotonic = time.monotonic()
+                return 0
+
+            message_ids = [int(row['id']) for row in expired_rows]
+            conversation_ids = sorted({int(row['conversation_id']) for row in expired_rows})
+            cur.execute(
+                f"DELETE FROM messages WHERE id IN ({','.join(['?'] * len(message_ids))})",
+                tuple(message_ids),
+            )
+            for conversation_id in conversation_ids:
+                cur.execute(
+                    'SELECT id, created_at FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1',
+                    (conversation_id,),
+                )
+                latest = cur.fetchone()
+                if latest:
+                    cur.execute(
+                        'UPDATE conversations SET last_message_id = ?, last_message_at = ? WHERE id = ?',
+                        (latest['id'], latest['created_at'], conversation_id),
+                    )
+                else:
+                    cur.execute(
+                        'UPDATE conversations SET last_message_id = NULL, last_message_at = NULL WHERE id = ?',
+                        (conversation_id,),
+                    )
+
+        _last_expiry_cleanup_monotonic = time.monotonic()
+        return len(expired_rows)
 
 
 # ------------------------------
@@ -323,9 +381,14 @@ async def friend_request_send(
         cur.execute(
             """
             SELECT 1 FROM friend_requests
-            WHERE from_user_id = ? AND to_user_id = ? AND status = 'pending'
+            WHERE status = 'pending'
+              AND (
+                (from_user_id = ? AND to_user_id = ?)
+                OR
+                (from_user_id = ? AND to_user_id = ?)
+              )
             """,
-            (current_user['id'], target['id']),
+            (current_user['id'], target['id'], target['id'], current_user['id']),
         )
         if cur.fetchone():
             raise HTTPException(status_code=400, detail='friend request already pending')
@@ -426,6 +489,28 @@ async def friend_request_respond(payload: FriendRequestRespondRequest, current_u
                 "INSERT OR IGNORE INTO contacts (user_id, contact_user_id, status, created_at) VALUES (?, ?, 'active', ?)",
                 (row['to_user_id'], row['from_user_id'], created_at),
             )
+            # Clean up any reciprocal/duplicate pending requests left behind by older behavior.
+            cur.execute(
+                """
+                UPDATE friend_requests
+                SET status = 'cancelled', responded_at = ?
+                WHERE status = 'pending'
+                  AND id != ?
+                  AND (
+                    (from_user_id = ? AND to_user_id = ?)
+                    OR
+                    (from_user_id = ? AND to_user_id = ?)
+                  )
+                """,
+                (
+                    created_at,
+                    payload.request_id,
+                    row['from_user_id'],
+                    row['to_user_id'],
+                    row['to_user_id'],
+                    row['from_user_id'],
+                ),
+            )
     await manager.send_to_user(
         row['from_user_id'],
         {
@@ -477,9 +562,25 @@ def contacts(current_user: sqlite3.Row = Depends(get_current_user)) -> dict[str,
 # ------------------------------
 @app.post('/messages/send')
 async def messages_send(payload: MessageSendRequest, current_user: sqlite3.Row = Depends(get_current_user)) -> dict[str, Any]:
+    cleanup_expired_messages()
     message_size_limit = MAX_PLAINTEXT_MESSAGE_LENGTH if payload.message_type == 'text' else MAX_MESSAGE_LENGTH
     if len(payload.content) > message_size_limit:
         raise HTTPException(status_code=400, detail='message too large')
+    ttl_seconds = payload.ttl_seconds
+    if payload.message_type == 'e2ee_text':
+        try:
+            parse_envelope(payload.content)
+            envelope_ttl_seconds = extract_ttl_seconds(payload.content)
+        except EnvelopeError as exc:
+            raise HTTPException(status_code=400, detail=f'invalid encrypted message envelope: {exc}') from exc
+        if ttl_seconds is None:
+            ttl_seconds = envelope_ttl_seconds
+        elif envelope_ttl_seconds is None:
+            raise HTTPException(status_code=400, detail='self-destruct encrypted messages must carry ttl_seconds in the envelope')
+        elif envelope_ttl_seconds != ttl_seconds:
+            raise HTTPException(status_code=400, detail='ttl_seconds mismatch between request and encrypted envelope')
+
+    expires_at = future_ts(ttl_seconds) if ttl_seconds is not None else None
 
     with db_cursor(commit=True) as cur:
         target = fetch_user_by_username(cur, payload.to_username.lower().strip())
@@ -492,15 +593,23 @@ async def messages_send(payload: MessageSendRequest, current_user: sqlite3.Row =
         if not are_friends(cur, current_user['id'], target['id']):
             raise HTTPException(status_code=403, detail='you can only send chat messages to contacts')
         conversation_id = get_or_create_conversation(cur, current_user['id'], target['id'])
-        is_online = False  # default; actual push happens after commit
         cur.execute(
             """
             INSERT INTO messages (
                 conversation_id, sender_id, receiver_id, content, message_type,
-                status, is_offline_queued, is_read, created_at
-            ) VALUES (?, ?, ?, ?, ?, 'sent', 1, 0, ?)
+                status, is_offline_queued, is_read, ttl_seconds, created_at, expires_at
+            ) VALUES (?, ?, ?, ?, ?, 'sent', 0, 0, ?, ?, ?)
             """,
-            (conversation_id, current_user['id'], target['id'], payload.content, payload.message_type, utcnow()),
+            (
+                conversation_id,
+                current_user['id'],
+                target['id'],
+                payload.content,
+                payload.message_type,
+                ttl_seconds,
+                utcnow(),
+                expires_at,
+            ),
         )
         message_id = int(cur.lastrowid)
         cur.execute(
@@ -514,17 +623,16 @@ async def messages_send(payload: MessageSendRequest, current_user: sqlite3.Row =
         message_payload = build_message_payload(cur, message_id)
 
     delivered_to_socket = await manager.send_to_user(target['id'], {'event': 'new_message', 'data': message_payload})
-    with db_cursor(commit=True) as cur:
-        cur.execute(
-            'UPDATE messages SET is_offline_queued = ? WHERE id = ?',
-            (0 if delivered_to_socket else 1, message_id),
-        )
-        message_payload['is_offline_queued'] = not delivered_to_socket
+    if not delivered_to_socket:
+        with db_cursor(commit=True) as cur:
+            cur.execute('UPDATE messages SET is_offline_queued = 1 WHERE id = ?', (message_id,))
+        message_payload['is_offline_queued'] = True
     return {'ok': True, 'message': 'submitted', 'data': message_payload}
 
 
 @app.post('/messages/ack', response_model=BasicResponse)
 async def messages_ack(payload: MessageAckRequest, current_user: sqlite3.Row = Depends(get_current_user)) -> BasicResponse:
+    cleanup_expired_messages()
     with db_cursor(commit=True) as cur:
         cur.execute(
             """
@@ -572,6 +680,7 @@ def messages_pull(
     mark_read: bool = Query(default=False),
     current_user: sqlite3.Row = Depends(get_current_user),
 ) -> dict[str, Any]:
+    cleanup_expired_messages()
     with db_cursor(commit=True) as cur:
         cur.execute('SELECT * FROM conversations WHERE id = ?', (conversation_id,))
         conversation = cur.fetchone()
@@ -598,16 +707,21 @@ def messages_pull(
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
 
+        marked_message_ids: set[int] = set()
+        mark_read_ts: Optional[str] = None
         if mark_read:
             message_ids = [row['id'] for row in rows if row['receiver_id'] == current_user['id'] and not row['is_read']]
             if message_ids:
+                mark_read_ts = utcnow()
+                marked_message_ids = set(message_ids)
                 cur.execute(
                     f"UPDATE messages SET is_read = 1, read_at = ? WHERE id IN ({','.join(['?'] * len(message_ids))})",
-                    (utcnow(), *message_ids),
+                    (mark_read_ts, *message_ids),
                 )
 
         messages = []
         for row in reversed(rows):
+            was_marked_now = row['id'] in marked_message_ids
             messages.append(
                 {
                     'message_id': row['id'],
@@ -616,12 +730,14 @@ def messages_pull(
                     'to_username': row['receiver_username'],
                     'content': row['content'],
                     'message_type': row['message_type'],
+                    'ttl_seconds': row['ttl_seconds'],
+                    'expires_at': row['expires_at'],
                     'status': row['status'],
                     'is_offline_queued': bool(row['is_offline_queued']),
-                    'is_read': bool(row['is_read']) or (mark_read and row['receiver_id'] == current_user['id']),
+                    'is_read': bool(row['is_read']) or was_marked_now,
                     'created_at': row['created_at'],
                     'delivered_at': row['delivered_at'],
-                    'read_at': row['read_at'],
+                    'read_at': mark_read_ts if was_marked_now else row['read_at'],
                 }
             )
         next_before_id = rows[-1]['id'] if rows else None
@@ -630,6 +746,7 @@ def messages_pull(
 
 @app.post('/conversations/{conversation_id}/mark-read', response_model=MarkReadResponse)
 def mark_read(conversation_id: int, current_user: sqlite3.Row = Depends(get_current_user)) -> MarkReadResponse:
+    cleanup_expired_messages()
     with db_cursor(commit=True) as cur:
         cur.execute('SELECT * FROM conversations WHERE id = ?', (conversation_id,))
         conversation = cur.fetchone()
@@ -655,6 +772,7 @@ def mark_read(conversation_id: int, current_user: sqlite3.Row = Depends(get_curr
 
 @app.get('/conversations')
 def conversations(current_user: sqlite3.Row = Depends(get_current_user)) -> dict[str, Any]:
+    cleanup_expired_messages()
     with db_cursor() as cur:
         cur.execute(
             """
@@ -719,6 +837,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)) -> N
     await manager.connect(user['id'], websocket)
     try:
         # Flush offline messages as soon as the user comes online.
+        cleanup_expired_messages()
         with db_cursor(commit=True) as cur:
             cur.execute(
                 """

@@ -65,7 +65,7 @@ D:\Learning\Year3 Sem2\COMP3334\Project_Code\Code
 - 这是一份基于当前代码的实际行为说明，不只是 README 摘要。
 - CLI 输出是 Python 字典风格，不是格式化 JSON。
 - 很多输出依赖数据库当前状态，所以示例中的 `user_id`、`request_id`、`conversation_id`、时间戳和 token 值可能与你本机不同。
-- 本项目当前仍是 Phase 1 原型，尚未实现真正的端到端加密。
+- 本项目当前仍是 Phase 1 原型，但默认 CLI 已经实现单设备 E2EE V1。
 
 ## 1. 当前已经实现的功能
 
@@ -104,30 +104,39 @@ D:\Learning\Year3 Sem2\COMP3334\Project_Code\Code
 - 离线消息存储
 - 用户重新上线后离线消息补发
 
-### 1.5 开发占位功能
+### 1.5 E2EE V1
 
-- 存储身份公钥占位数据
+- 当前 CLI 默认发送 `e2ee_text`
+- 发送前本地加密，接收后本地解密
+- 服务端只存密文 envelope，不存新聊天消息明文
+- 本地长期身份密钥管理
+- `/identity-key` 公钥发布与拉取
+- TOFU 首次信任
+- 指纹显示
+- 公钥变化时阻止继续发送
 
 ### 1.6 已经做了但还不完整的保护
 
 - Argon2 密码哈希
 - 内存限流
+- TOFU 信任模型
 - 只有联系人才能发送消息
+- 公钥变更检测
+- 新加密消息的 replay protection / duplicate detection
 
 ## 2. 还没有实现的功能
 
 以下能力在 README 和代码中都明确还没完成：
 
-- 真正的端到端加密
-- AEAD / AAD
-- 重放保护
-- 指纹验证
-- 密钥变更提醒
+- 指纹人工验证 UI
+- trust reset CLI
 - 消息 TTL / 自毁
+- 过期消息清理
 - TLS 部署
-- 用户级 block / unblock CLI 功能
-- CLI 读取身份公钥
-- CLI 的消息历史分页参数
+- 用户级 block / unblock / remove contact CLI 或 API
+- 多设备安全会话
+- 本地状态加密 / keychain 集成
+- CLI 没有直接继续使用 `before_id` 的翻页命令，虽然 HTTP API 支持分页
 
 ## 3. 启动方式
 
@@ -901,7 +910,7 @@ open 1 50
 #### 预期输出
 
 ```text
-{'messages': [{'message_id': 1, 'conversation_id': 1, 'from_username': 'alice', 'to_username': 'bob', 'content': 'hello bob', 'message_type': 'text', 'status': 'delivered', 'is_offline_queued': False, 'is_read': True, 'created_at': '2026-04-01T03:20:00.000000+00:00', 'delivered_at': '2026-04-01T03:20:02.000000+00:00', 'read_at': '2026-04-01T03:25:00.000000+00:00'}], 'next_before_id': 1}
+{'messages': [{'message_id': 1, 'conversation_id': 1, 'from_username': 'alice', 'to_username': 'bob', 'content': 'hello bob', 'message_type': 'e2ee_text', 'status': 'delivered', 'is_offline_queued': False, 'is_read': True, 'created_at': '2026-04-01T03:20:00.000000+00:00', 'delivered_at': '2026-04-01T03:20:02.000000+00:00', 'read_at': '2026-04-01T03:25:00.000000+00:00'}], 'next_before_id': 1}
 ```
 
 #### 输出解释
@@ -910,8 +919,8 @@ open 1 50
 - `message_id`：消息 ID
 - `conversation_id`：会话 ID
 - `from_username` / `to_username`：发送方和接收方
-- `content`：消息明文内容
-- `message_type`：当前只有 `text`
+- `content`：CLI 本地解密后的显示内容；数据库里对加密消息保存的是密文 envelope
+- `message_type`：当前 CLI 默认收到的是 `e2ee_text`
 - `status`：当前主要是 `sent` 或 `delivered`
 - `is_offline_queued`：如果接收方当时不在线，可能为 `True`
 - `is_read`：是否已读
@@ -919,6 +928,24 @@ open 1 50
 - `delivered_at`：接收方客户端 ACK 后才会有值
 - `read_at`：已读时间
 - `next_before_id`：用于更老消息分页的游标，当前 CLI 没有继续分页命令
+
+如果消息被判定为 replay，`content` 也可能显示为：
+
+```text
+[replay blocked: ...]
+```
+
+如果本地无法解密，`content` 也可能显示为：
+
+```text
+[encrypted message blocked: ...]
+```
+
+或：
+
+```text
+[encrypted message unavailable: ...]
+```
 
 #### 预期报错
 
@@ -955,7 +982,7 @@ error: usage: open <conversation_id> [limit]
 
 - 当前只允许发给联系人
 - 当前不支持给自己发消息
-- 当前消息明文保存在数据库
+- 当前 CLI 会先本地加密，再把密文 envelope 上传到服务端
 
 #### 命令
 
@@ -968,7 +995,8 @@ send bob hello bob
 发送方看到：
 
 ```text
-{'ok': True, 'message': 'submitted', 'data': {'message_id': 7, 'conversation_id': 1, 'from_username': 'alice', 'to_username': 'bob', 'content': 'hello bob', 'message_type': 'text', 'status': 'sent', 'is_offline_queued': False, 'is_read': False, 'created_at': '2026-04-01T03:30:00.000000+00:00', 'delivered_at': None, 'read_at': None}}
+{'ok': True, 'message': 'submitted', 'data': {'message_id': 7, 'conversation_id': 1, 'from_username': 'alice', 'to_username': 'bob', 'content': 'hello bob', 'message_type': 'e2ee_text', 'status': 'sent', 'is_offline_queued': False, 'is_read': False, 'created_at': '2026-04-01T03:30:00.000000+00:00', 'delivered_at': None, 'read_at': None}}
+(E2EE sender fingerprint 0123abcd...; trusted peer fingerprint 89ef5678...)
 ```
 
 如果接收方在线，对方终端会看到：
@@ -991,6 +1019,9 @@ send bob hello bob
 - `delivered` 不是立即出现在同步响应里，而是由接收方客户端收到后调用 `/messages/ack`
 - `is_offline_queued: False`：表示当时接收方在线，消息直接推送成功
 - 如果接收方离线，则同步响应中通常会看到 `is_offline_queued: True`
+- `message_type: e2ee_text`：表示当前 CLI 走的是默认加密消息流
+- 这里显示给发送方看的 `content` 是本地明文，便于阅读；服务端数据库里存的是密文 JSON envelope
+- 第二行会打印发送方本地指纹和当前信任的对端指纹
 
 #### 预期报错
 
@@ -1011,6 +1042,22 @@ error: message blocked by user policy
 ```
 
 ```text
+error: peer bob has no published identity key
+```
+
+```text
+error: identity key changed for bob; trusted fingerprint ..., current server fingerprint .... refusing to continue until trust is reset
+```
+
+```text
+error: peer bob has multiple active devices; this prototype only supports one device
+```
+
+```text
+error: plaintext message too large; limit is 4000 characters
+```
+
+```text
 error: message too large
 ```
 
@@ -1024,13 +1071,19 @@ error: usage: send <username> <message text>
 - 你试图给自己发消息
 - 对方不是你的联系人
 - 数据库里存在 block 关系
-- 消息太长，超过 4000 字符
+- 对方还没有发布身份公钥
+- 对方公钥和本地 TOFU 记录不一致
+- 对方存在多个活跃设备公钥，而当前原型只支持一个设备
+- 明文消息太长，超过 CLI 的 4000 字符限制
+- 加密后 envelope 太长，超过服务端上限
 - 缺少参数
 
 #### 解决办法
 
 - 确认接收者用户名正确
 - 先通过好友请求建立联系人关系
+- 让对方先登录一次，或让对方执行 `store-dev-key`
+- 如果你确认是合法环境重置，删除本地状态和数据库后重新建立信任
 - 缩短消息长度
 - 若是 block，需要修改数据库或后续实现 block 管理功能
 
@@ -1091,9 +1144,9 @@ error: usage: mark-read <conversation_id>
 
 #### 功能
 
-存储一个假的身份公钥，用作后续 E2EE 的占位数据。
+确保当前登录用户的真实身份密钥存在，并重新发布当前设备的真实公钥。
 
-CLI 会自动生成一个随机十六进制串作为 `public_key`，并固定使用设备 ID `cli-device-1`。
+当前原型固定使用设备 ID `cli-device-1`。
 
 #### 命令
 
@@ -1104,15 +1157,16 @@ store-dev-key
 #### 预期输出
 
 ```text
-{'ok': True, 'message': 'identity public key stored'}
-Stored a placeholder identity public key for later E2EE phases.
+{'ok': True, 'message': 'identity public key stored', 'device_id': 'cli-device-1', 'fingerprint': '0123abcd...'}
+Published the local E2EE identity key for this device.
 ```
 
 #### 输出解释
 
 - 第一行说明后端已成功存储公钥记录
+- 第一行里的 `device_id` 和 `fingerprint` 是当前真实本地身份
 - 第二行是 CLI 补充说明
-- 这不是实际加密功能，只是把占位数据存进 `identity_public_keys`
+- 这不是假数据占位命令，而是重新发布当前真实公钥
 
 #### 预期报错
 
@@ -1206,6 +1260,22 @@ bye
 
 - 第一行表示你收到了实时消息
 - 第二行表示 CLI 自动调用 `/messages/ack`
+
+#### 重复投递 / replay 检测
+
+如果同一条消息因为未 ACK 被服务端再次推送，可能看到：
+
+```text
+[push] [duplicate delivery ignored: duplicate delivery detected for message 7; already processed locally]
+[push] auto-acked message 7 as delivered
+```
+
+如果同一 replay token 以新的 server message id 再次出现，可能看到：
+
+```text
+[push] [replay blocked: replay detected: token already seen in message 7; current server message id 8]
+[push] auto-acked message 8 as delivered
+```
 
 #### 如果第二行失败
 
@@ -1613,6 +1683,7 @@ Remove-Item .\client\client_state.json -Force -ErrorAction SilentlyContinue
 
 但它仍是课程原型，不应被误认为已经完成真正的安全即时通信系统。当前最重要的缺口仍然是：
 
-- 消息仍是明文
-- 没有真正的端到端加密
-- 没有密钥验证和重放保护
+- 没有指纹人工验证和 trust reset
+- 没有 TTL / expiry cleanup
+- 没有 block / unblock / remove contact 管理
+- 没有 TLS

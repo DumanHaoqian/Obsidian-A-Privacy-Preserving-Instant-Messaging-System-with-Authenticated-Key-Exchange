@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -9,11 +11,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from client.api_client import ApiClient
-from client.e2ee_client import ClientE2EEManager
+from client.e2ee_client import ClientE2EEManager, DuplicateDeliveryError, ReplayAttackError
 from client.otp import totp_now
 from client.state import load_state, save_state
 from client.ws_client import WebSocketListener
-from shared.e2ee import E2EE_MESSAGE_TYPE, TrustError
+from shared.e2ee import E2EE_MESSAGE_TYPE, MAX_TTL_SECONDS, MIN_TTL_SECONDS, TrustError
 
 
 HELP_TEXT = """
@@ -31,6 +33,7 @@ Commands:
   conversations
   open <conversation_id> [limit]
   send <username> <message text>
+  send-ttl <username> <ttl_seconds> <message text>
   mark-read <conversation_id>
   store-dev-key                # ensures and republishes the real E2EE identity key for this device
   exit
@@ -50,6 +53,7 @@ class IMCli:
         self.api = ApiClient(base_url, self.state.get('access_token'))
         self.e2ee = ClientE2EEManager(self.api, self.state)
         self.ws: Optional[WebSocketListener] = None
+        self._expiry_timers: dict[int, threading.Timer] = {}
         if self.state.get('access_token') and self.state.get('username'):
             self._start_ws()
 
@@ -69,6 +73,48 @@ class IMCli:
     def _persist(self) -> None:
         save_state(self.state)
 
+    @staticmethod
+    def _parse_iso_ts(value: Any) -> Optional[datetime]:
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+    def _is_message_expired(self, message_payload: dict[str, Any]) -> bool:
+        expires_at = self._parse_iso_ts(message_payload.get('expires_at'))
+        return expires_at is not None and expires_at <= datetime.now(timezone.utc)
+
+    def _schedule_self_destruct_notice(self, message_payload: dict[str, Any]) -> None:
+        expires_at = self._parse_iso_ts(message_payload.get('expires_at'))
+        if expires_at is None:
+            return
+        if expires_at <= datetime.now(timezone.utc):
+            return
+        try:
+            message_id = int(message_payload.get('message_id'))
+        except (TypeError, ValueError):
+            return
+        if message_id in self._expiry_timers:
+            return
+
+        delay = max(0.0, (expires_at - datetime.now(timezone.utc)).total_seconds())
+
+        def _notify() -> None:
+            self._expiry_timers.pop(message_id, None)
+            print(f"\n[expire] self-destruct message {message_id} expired and will no longer appear in history")
+
+        timer = threading.Timer(delay, _notify)
+        timer.daemon = True
+        self._expiry_timers[message_id] = timer
+        timer.start()
+
+    def _clear_expiry_timers(self) -> None:
+        for timer in self._expiry_timers.values():
+            timer.cancel()
+        self._expiry_timers.clear()
+
     def _current_username(self) -> str:
         username = self.state.get('username')
         if not username:
@@ -81,31 +127,41 @@ class IMCli:
         self._persist()
         return {'ok': True, 'message': 'identity public key stored'}, identity
 
-    def _display_message_content(self, message_payload: dict[str, Any]) -> str:
+    def _display_message_content(self, message_payload: dict[str, Any], *, context: str = 'history') -> str:
+        if self._is_message_expired(message_payload):
+            return '[expired self-destruct message]'
         if message_payload.get('message_type') != E2EE_MESSAGE_TYPE:
             return str(message_payload.get('content', ''))
         username = self.state.get('username')
         if not username:
             return '[encrypted message unavailable without a logged-in local user context]'
         try:
-            return self.e2ee.decrypt_message_for_user(str(username), message_payload)
+            return self.e2ee.decrypt_message_for_user(str(username), message_payload, context=context)
+        except DuplicateDeliveryError as exc:
+            return f'[duplicate delivery ignored: {exc}]'
+        except ReplayAttackError as exc:
+            return f'[replay blocked: {exc}]'
         except TrustError as exc:
             return f'[encrypted message blocked: {exc}]'
         except Exception as exc:
             return f'[encrypted message unavailable: {exc}]'
 
-    def _display_message_payload(self, message_payload: dict[str, Any]) -> dict[str, Any]:
+    def _display_message_payload(self, message_payload: dict[str, Any], *, context: str = 'history') -> dict[str, Any]:
         rendered = dict(message_payload)
-        rendered['content'] = self._display_message_content(rendered)
+        rendered['content'] = self._display_message_content(rendered, context=context)
         return rendered
 
     def _display_pull_response(self, response: dict[str, Any]) -> dict[str, Any]:
         rendered = dict(response)
-        rendered['messages'] = [
-            self._display_message_payload(message)
-            for message in response.get('messages', [])
-            if isinstance(message, dict)
-        ]
+        rendered_messages = []
+        for message in response.get('messages', []):
+            if not isinstance(message, dict) or self._is_message_expired(message):
+                continue
+            rendered_message = self._display_message_payload(message, context='history')
+            self._schedule_self_destruct_notice(rendered_message)
+            rendered_messages.append(rendered_message)
+        rendered['messages'] = rendered_messages
+        self._persist()
         return rendered
 
     def _display_send_response(self, response: dict[str, Any], plaintext: str) -> dict[str, Any]:
@@ -117,6 +173,7 @@ class IMCli:
                 message_payload['content'] = plaintext
             else:
                 message_payload = self._display_message_payload(message_payload)
+            self._schedule_self_destruct_notice(message_payload)
             rendered['data'] = message_payload
         return rendered
 
@@ -125,8 +182,20 @@ class IMCli:
         data = payload.get('data', {})
         if event == 'new_message':
             if isinstance(data, dict):
-                rendered_content = self._display_message_content(data)
-                print(f"\n[push] new message from {data.get('from_username')}: {rendered_content}")
+                try:
+                    if self._is_message_expired(data):
+                        print(f"\n[push] self-destruct message {data.get('message_id')} already expired and was ignored")
+                    else:
+                        rendered_content = self._display_message_content(data, context='push')
+                        if rendered_content.startswith('[duplicate delivery ignored:'):
+                            print(f"\n[push] {rendered_content}")
+                        elif rendered_content.startswith('[replay blocked:'):
+                            print(f"\n[push] {rendered_content}")
+                        else:
+                            print(f"\n[push] new message from {data.get('from_username')}: {rendered_content}")
+                        self._schedule_self_destruct_notice(data)
+                finally:
+                    self._persist()
             else:
                 print(f"\n[push] new message payload: {data}")
             try:
@@ -169,6 +238,7 @@ class IMCli:
             except Exception as exc:
                 print(f'error: {exc}')
         self._stop_ws()
+        self._clear_expiry_timers()
         self.api.close()
 
     def execute(self, raw: str) -> None:
@@ -215,6 +285,7 @@ class IMCli:
             self.state['username'] = None
             self._persist()
             self._stop_ws()
+            self._clear_expiry_timers()
         elif cmd == 'me':
             print(self.api.me())
         elif cmd == 'contacts':
@@ -258,6 +329,37 @@ class IMCli:
             self._persist()
             response = self.api.send_message(username, envelope, message_type=E2EE_MESSAGE_TYPE)
             print(self._display_send_response(response, content))
+            print(
+                f"(E2EE sender fingerprint {identity['fingerprint']}; "
+                f"trusted peer fingerprint {peer['fingerprint']})"
+            )
+        elif cmd == 'send-ttl':
+            if len(parts) < 4:
+                raise RuntimeError('usage: send-ttl <username> <ttl_seconds> <message text>')
+            username = parts[1]
+            ttl_seconds = int(parts[2])
+            if ttl_seconds < MIN_TTL_SECONDS or ttl_seconds > MAX_TTL_SECONDS:
+                raise RuntimeError(
+                    f'ttl_seconds must be between {MIN_TTL_SECONDS} and {MAX_TTL_SECONDS}'
+                )
+            content = raw.split(None, 3)[3]
+            if len(content) > MAX_PLAINTEXT_MESSAGE_LENGTH:
+                raise RuntimeError(f'plaintext message too large; limit is {MAX_PLAINTEXT_MESSAGE_LENGTH} characters')
+            envelope, identity, peer = self.e2ee.encrypt_outbound_message(
+                self._current_username(),
+                username,
+                content,
+                ttl_seconds=ttl_seconds,
+            )
+            self._persist()
+            response = self.api.send_message(
+                username,
+                envelope,
+                message_type=E2EE_MESSAGE_TYPE,
+                ttl_seconds=ttl_seconds,
+            )
+            print(self._display_send_response(response, content))
+            print(f"(self-destruct after {ttl_seconds} seconds)")
             print(
                 f"(E2EE sender fingerprint {identity['fingerprint']}; "
                 f"trusted peer fingerprint {peer['fingerprint']})"

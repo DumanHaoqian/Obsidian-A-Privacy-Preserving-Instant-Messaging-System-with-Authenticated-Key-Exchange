@@ -70,8 +70,16 @@ class ApiClient:
     def contacts(self) -> Any:
         return self._handle(self.http.get('/contacts', headers=self._headers()))
 
-    def send_message(self, to_username: str, content: str, message_type: str = 'text') -> Any:
+    def send_message(
+        self,
+        to_username: str,
+        content: str,
+        message_type: str = 'text',
+        ttl_seconds: Optional[int] = None,
+    ) -> Any:
         payload = {'to_username': to_username, 'content': content, 'message_type': message_type}
+        if ttl_seconds is not None:
+            payload['ttl_seconds'] = ttl_seconds
         return self._handle(self.http.post('/messages/send', json=payload, headers=self._headers()))
 
     def ack_message(self, message_id: int) -> Any:

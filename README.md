@@ -14,7 +14,7 @@ The current CLI encrypts message bodies locally before upload and decrypts them 
 For `e2ee_text` messages the server stores ciphertext envelopes, not plaintext.
 
 This is still a prototype, not a full modern messaging protocol.
-It does not yet implement replay protection, timed self-destruct messages, TLS, formal fingerprint verification UI, or multi-device secure sessions.
+It does not yet implement TLS, formal fingerprint verification UI, or multi-device secure sessions.
 
 ## Companion documents
 
@@ -127,6 +127,7 @@ The shared E2EE implementation lives in `shared/e2ee.py`.
 - public-key fingerprint: SHA-256 of the raw public key bytes
 - message type for encrypted chat: `e2ee_text`
 - default device id used by the prototype: `cli-device-1`
+- new encrypted messages include a client-generated replay token for duplicate detection
 
 ### Envelope format
 
@@ -137,9 +138,10 @@ Encrypted messages are stored and transmitted as a JSON string with this shape:
   "alg": "x25519-hkdf-sha256-aesgcm",
   "ciphertext": "...",
   "nonce": "...",
+  "replay_token": "...",
   "salt": "...",
   "sender_device_id": "cli-device-1",
-  "v": 1
+  "v": 2
 }
 ```
 
@@ -149,6 +151,7 @@ The authenticated associated data (AAD) currently binds:
 - `to_username`
 - `sender_device_id`
 - `message_type`
+- `replay_token` for V2 envelopes
 
 This means tampering with those fields is detected during decryption.
 
@@ -202,6 +205,7 @@ Current keys in that file:
 - `username`
 - `device_keys`
 - `trusted_peer_keys`
+- `replay_cache`
 
 This means the local state file currently holds sensitive data in plaintext JSON, including:
 
@@ -209,6 +213,7 @@ This means the local state file currently holds sensitive data in plaintext JSON
 - bearer tokens
 - private identity keys
 - trusted peer public keys
+- replay tokens for duplicate detection
 
 Logging out clears the current `access_token` and `username`, but it does not delete stored OTP secrets, device keys, or trusted peer keys.
 
@@ -445,24 +450,23 @@ Server-side pushed events currently used by the system:
 - public identity key upload and lookup
 - single-device E2EE message encryption/decryption for the CLI flow
 - authenticated encryption with metadata binding
+- basic replay protection / duplicate detection for new encrypted messages
 - friend request send / accept / decline / cancel
 - contacts-only messaging by default
 - sent / delivered status, with delivered triggered by recipient client acknowledgement
 - offline store-and-forward for the current encrypted CLI flow
 - conversation list, unread counters, and basic paging
+- basic timed self-destruct messages with server-timed expiry and best-effort expiry cleanup
 
 ### Partially implemented
 
+- replay protection: new encrypted messages carry a replay token and duplicate deliveries are detected locally, but legacy V1 messages remain unprotected
 - fingerprint visibility: fingerprints are shown in selected CLI flows, but there is no dedicated verification workflow
 - key-change handling: trust mismatches are detected and blocked, but there is no user-facing trust reset flow
 - blocking/removing: the schema and enforcement hooks exist, but there is no block/unblock/remove contact CLI or API surface
 
 ### Not implemented yet
 
-- replay protection / duplicate detection
-- timed self-destruct messages / TTL metadata
-- automatic client-side deletion of expired messages
-- server-side expiry cleanup for queued ciphertext
 - retention cleanup based on `MESSAGE_RETENTION_DAYS`
 - TLS for client-server transport
 - encrypted local storage / OS keychain integration
@@ -473,21 +477,22 @@ Server-side pushed events currently used by the system:
 
 - The current E2EE design is static-key, TOFU-based, and single-device.
 - If a peer has multiple active identity keys and none matches `cli-device-1`, the client refuses because the prototype only supports one device.
-- Replay protection is not implemented. Messages are replayed from the server while `delivered_at` is still `NULL`.
+- New encrypted messages use a client-generated replay token. The client suppresses duplicate delivery of the same message id and blocks the same replay token if it reappears under a different server message id.
+- Legacy V1 encrypted messages created before replay tokens were added remain readable, but they do not gain replay protection retroactively.
 - `delivered` means the recipient client called `/messages/ack` after receipt. It is not a read receipt.
 - delivery acknowledgements are server-visible control messages; they are not E2EE payloads
-- In the current CLI, delivery ack is still attempted after push reception even if decryption renders an error placeholder.
+- In the current CLI, delivery ack is still attempted after duplicate/replay detection or decryption error placeholders so the server stops resending the message.
 - `open` marks returned unread messages as read by default.
 - The WebSocket listener retries on connection errors and clears the local session if reconnect fails with authentication errors.
-- `MESSAGE_RETENTION_DAYS = 7` exists in config but is not currently enforced anywhere in the server logic.
+- `MESSAGE_RETENTION_DAYS = 7` exists in config but is not currently enforced as a general max-age retention rule in the server logic.
 - There is no TLS configuration in this repository. Use `http://` / `ws://` for local development only.
 
 ## What to build next
 
 The most important missing items for the course project are:
 
-1. replay protection / duplicate detection
-2. timed self-destruct messages and expiry cleanup
-3. proper fingerprint verification UX and trust-reset workflow
-4. block/unblock and contact removal management
-5. TLS for transport security
+1. proper fingerprint verification UX and trust-reset workflow
+2. block/unblock and contact removal management
+3. TLS for transport security
+4. secure local storage for client secrets and private keys
+5. stronger forward-secrecy-oriented session design

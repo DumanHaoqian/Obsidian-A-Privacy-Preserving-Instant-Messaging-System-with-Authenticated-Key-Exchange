@@ -145,7 +145,9 @@ def init_db() -> None:
                 status TEXT NOT NULL DEFAULT 'sent',
                 is_offline_queued INTEGER NOT NULL DEFAULT 0,
                 is_read INTEGER NOT NULL DEFAULT 0,
+                ttl_seconds INTEGER,
                 created_at TEXT NOT NULL,
+                expires_at TEXT,
                 delivered_at TEXT,
                 read_at TEXT,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
@@ -164,3 +166,9 @@ def init_db() -> None:
             );
             """
         )
+        cur.execute('PRAGMA table_info(messages)')
+        existing_columns = {row['name'] for row in cur.fetchall()}
+        if 'ttl_seconds' not in existing_columns:
+            cur.execute('ALTER TABLE messages ADD COLUMN ttl_seconds INTEGER')
+        if 'expires_at' not in existing_columns:
+            cur.execute('ALTER TABLE messages ADD COLUMN expires_at TEXT')

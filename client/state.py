@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_PATH = Path(__file__).resolve().parent / 'client_state.json'
+MAX_REPLAY_CACHE_ENTRIES_PER_PEER = 2048
 
 
 def default_state() -> dict[str, Any]:
@@ -12,6 +13,7 @@ def default_state() -> dict[str, Any]:
         'username': None,
         'device_keys': {},
         'trusted_peer_keys': {},
+        'replay_cache': {},
     }
 
 
@@ -19,7 +21,7 @@ def normalize_state(state: Any) -> dict[str, Any]:
     normalized = default_state()
     if not isinstance(state, dict):
         return normalized
-    for key in ('known_otp_secrets', 'device_keys', 'trusted_peer_keys'):
+    for key in ('known_otp_secrets', 'device_keys', 'trusted_peer_keys', 'replay_cache'):
         value = state.get(key)
         if isinstance(value, dict):
             normalized[key] = value
@@ -50,6 +52,30 @@ def _merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, An
     return merged
 
 
+def _trim_replay_cache(cache: Any) -> dict[str, Any]:
+    if not isinstance(cache, dict):
+        return {}
+    trimmed: dict[str, Any] = {}
+    for local_username, peers in cache.items():
+        if not isinstance(peers, dict):
+            continue
+        local_trimmed: dict[str, Any] = {}
+        for peer_username, tokens in peers.items():
+            if not isinstance(tokens, dict):
+                continue
+            items = [(token, metadata) for token, metadata in tokens.items() if isinstance(metadata, dict)]
+            items.sort(
+                key=lambda item: (
+                    str(item[1].get('last_seen_at') or item[1].get('first_seen_at') or ''),
+                    int(item[1].get('message_id') or 0),
+                ),
+                reverse=True,
+            )
+            local_trimmed[peer_username] = dict(items[:MAX_REPLAY_CACHE_ENTRIES_PER_PEER])
+        trimmed[local_username] = local_trimmed
+    return trimmed
+
+
 def load_state() -> dict[str, Any]:
     return _read_state_from_disk()
 
@@ -60,6 +86,7 @@ def save_state(state: dict[str, Any]) -> None:
     merged = dict(current)
     for key in ('known_otp_secrets', 'device_keys', 'trusted_peer_keys'):
         merged[key] = _merge_dicts(current.get(key, {}), incoming.get(key, {}))
+    merged['replay_cache'] = _trim_replay_cache(_merge_dicts(current.get('replay_cache', {}), incoming.get('replay_cache', {})))
     merged['access_token'] = incoming.get('access_token')
     merged['username'] = incoming.get('username')
     temp_path = STATE_PATH.with_name(f'{STATE_PATH.name}.tmp')

@@ -1,6 +1,7 @@
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
+from shared.e2ee import MAX_TTL_SECONDS, MIN_TTL_SECONDS
 
 
 class RegisterRequest(BaseModel):
@@ -75,6 +76,7 @@ class MessageSendRequest(BaseModel):
     to_username: str
     content: str = Field(min_length=1, max_length=16000)
     message_type: Literal['text', 'e2ee_text'] = 'text'
+    ttl_seconds: Optional[int] = Field(default=None, ge=MIN_TTL_SECONDS, le=MAX_TTL_SECONDS)
 
 
 class IdentityKeyUpsertRequest(BaseModel):

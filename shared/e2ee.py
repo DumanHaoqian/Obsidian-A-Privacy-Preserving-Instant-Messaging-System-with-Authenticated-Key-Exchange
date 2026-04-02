@@ -4,7 +4,7 @@ import base64
 import json
 import secrets
 from hashlib import sha256
-from typing import Any
+from typing import Any, Optional
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
@@ -12,10 +12,13 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 ALGORITHM = 'x25519-hkdf-sha256-aesgcm'
-ENVELOPE_VERSION = 1
+ENVELOPE_VERSION = 2
+LEGACY_ENVELOPE_VERSION = 1
 E2EE_MESSAGE_TYPE = 'e2ee_text'
 DEFAULT_DEVICE_ID = 'cli-device-1'
 HKDF_INFO = b'comp3334-im-e2ee-v1'
+MIN_TTL_SECONDS = 5
+MAX_TTL_SECONDS = 60 * 60 * 24
 
 
 class E2EEError(RuntimeError):
@@ -93,6 +96,8 @@ def build_aad(
     to_username: str,
     sender_device_id: str,
     message_type: str,
+    replay_token: Optional[str] = None,
+    ttl_seconds: Optional[int] = None,
 ) -> bytes:
     payload = {
         'from_username': from_username.lower(),
@@ -100,6 +105,10 @@ def build_aad(
         'sender_device_id': sender_device_id,
         'to_username': to_username.lower(),
     }
+    if replay_token is not None:
+        payload['replay_token'] = replay_token
+    if ttl_seconds is not None:
+        payload['ttl_seconds'] = ttl_seconds
     return json.dumps(payload, separators=(',', ':'), sort_keys=True).encode('utf-8')
 
 
@@ -124,10 +133,26 @@ def parse_envelope(envelope_text: str) -> dict[str, Any]:
     missing = [key for key in required if key not in payload]
     if missing:
         raise EnvelopeError(f'encrypted envelope missing fields: {", ".join(sorted(missing))}')
-    if payload['v'] != ENVELOPE_VERSION:
+    if payload['v'] not in (LEGACY_ENVELOPE_VERSION, ENVELOPE_VERSION):
         raise EnvelopeError(f'unsupported encrypted envelope version: {payload["v"]}')
     if payload['alg'] != ALGORITHM:
         raise EnvelopeError(f'unsupported encryption algorithm: {payload["alg"]}')
+    if payload['v'] >= ENVELOPE_VERSION:
+        replay_token = payload.get('replay_token')
+        if not isinstance(replay_token, str) or len(replay_token) != 32:
+            raise EnvelopeError('encrypted envelope has an invalid replay token')
+        try:
+            int(replay_token, 16)
+        except ValueError as exc:
+            raise EnvelopeError('encrypted envelope has an invalid replay token') from exc
+    ttl_seconds = payload.get('ttl_seconds')
+    if ttl_seconds is not None:
+        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int):
+            raise EnvelopeError('encrypted envelope has an invalid ttl_seconds value')
+        if ttl_seconds < MIN_TTL_SECONDS or ttl_seconds > MAX_TTL_SECONDS:
+            raise EnvelopeError(
+                f'encrypted envelope ttl_seconds must be between {MIN_TTL_SECONDS} and {MAX_TTL_SECONDS}'
+            )
     return payload
 
 
@@ -140,11 +165,13 @@ def encrypt_message(
     to_username: str,
     sender_device_id: str = DEFAULT_DEVICE_ID,
     message_type: str = E2EE_MESSAGE_TYPE,
+    ttl_seconds: Optional[int] = None,
 ) -> str:
     sender_private_key = _load_private_key(sender_private_key_b64)
     recipient_public_key = _load_public_key(recipient_public_key_b64)
     salt = secrets.token_bytes(16)
     nonce = secrets.token_bytes(12)
+    replay_token = secrets.token_hex(16)
     shared_secret = sender_private_key.exchange(recipient_public_key)
     content_key = _derive_content_key(shared_secret, salt)
     aad = build_aad(
@@ -152,16 +179,21 @@ def encrypt_message(
         to_username=to_username,
         sender_device_id=sender_device_id,
         message_type=message_type,
+        replay_token=replay_token,
+        ttl_seconds=ttl_seconds,
     )
     ciphertext = AESGCM(content_key).encrypt(nonce, plaintext.encode('utf-8'), aad)
     envelope = {
         'v': ENVELOPE_VERSION,
         'alg': ALGORITHM,
+        'replay_token': replay_token,
         'sender_device_id': sender_device_id,
         'salt': _b64encode(salt),
         'nonce': _b64encode(nonce),
         'ciphertext': _b64encode(ciphertext),
     }
+    if ttl_seconds is not None:
+        envelope['ttl_seconds'] = ttl_seconds
     return json.dumps(envelope, separators=(',', ':'), sort_keys=True)
 
 
@@ -187,6 +219,8 @@ def decrypt_message(
         to_username=to_username,
         sender_device_id=envelope['sender_device_id'],
         message_type=message_type,
+        replay_token=envelope.get('replay_token') if envelope['v'] >= ENVELOPE_VERSION else None,
+        ttl_seconds=envelope.get('ttl_seconds'),
     )
     try:
         plaintext = AESGCM(content_key).decrypt(nonce, ciphertext, aad)
@@ -196,3 +230,14 @@ def decrypt_message(
         return plaintext.decode('utf-8')
     except UnicodeDecodeError as exc:
         raise DecryptionError('encrypted message decrypted to invalid UTF-8') from exc
+
+
+def extract_replay_token(envelope_text: str) -> Optional[str]:
+    envelope = parse_envelope(envelope_text)
+    return str(envelope['replay_token']) if envelope.get('v', LEGACY_ENVELOPE_VERSION) >= ENVELOPE_VERSION else None
+
+
+def extract_ttl_seconds(envelope_text: str) -> Optional[int]:
+    envelope = parse_envelope(envelope_text)
+    ttl_seconds = envelope.get('ttl_seconds')
+    return int(ttl_seconds) if ttl_seconds is not None else None

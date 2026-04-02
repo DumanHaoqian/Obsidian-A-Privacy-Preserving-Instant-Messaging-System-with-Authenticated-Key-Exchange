@@ -1,5 +1,5 @@
 {
-  "access_token": "lWwzOUe4rHRxBA-8Le5BVm-XkYI8r1Z2W2fLBpMdKPY",
+  "access_token": "078o0Y-G1SDMIuo2FkJuyoifBi5z5-oSOH9RiUBn80w",
   "device_keys": {
     "frank": {
       "device_id": "cli-device-1",
@@ -17,6 +17,22 @@
   "known_otp_secrets": {
     "frank": "L5PW3XYHZ4QHPA3NYEFLA446JB2VZU62",
     "nicco": "SSFIYURHQ4DTNGXP2FTOF2OP6RDU4MM7"
+  },
+  "replay_cache": {
+    "nicco": {
+      "frank": {
+        "5e26b15f03f2ae1aa74def93056cdf3e": {
+          "first_seen_at": "2026-04-02T08:49:33.647219+00:00",
+          "last_seen_at": "2026-04-02T08:49:44.487643+00:00",
+          "message_id": 6
+        },
+        "eff925bf3f9ce1363af5162046901bce": {
+          "first_seen_at": "2026-04-02T08:47:00.756419+00:00",
+          "last_seen_at": "2026-04-02T08:50:15.066669+00:00",
+          "message_id": 5
+        }
+      }
+    }
   },
   "trusted_peer_keys": {
     "frank": {
@@ -42,5 +58,5 @@
       }
     }
   },
-  "username": "frank"
+  "username": "nicco"
 }
