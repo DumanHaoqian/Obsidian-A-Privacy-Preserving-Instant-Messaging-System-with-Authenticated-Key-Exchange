@@ -4,25 +4,7 @@
 
 ## 还必须做的
 
-### 1. 指纹人工验证
-
-为什么要做：
-
-- `R5` 明确要求显示 fingerprint / safety number，并允许用户把联系人标记为 `verified`
-
-当前缺口：
-
-- 现在只是部分地方打印 fingerprint
-- 没有专门的查看 / 比对指纹流程
-- 没有 `mark verified` 命令
-
-代码证据：
-
-- [shared/e2ee.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/shared/e2ee.py#L63)
-- [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L217)
-- [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L274)
-
-### 2. 换钥后的 trust reset / 重新验证流程
+### 1. 换钥后的 trust reset / 重新验证流程
 
 为什么要做：
 
@@ -39,7 +21,7 @@
 - [client/e2ee_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/e2ee_client.py#L187)
 - [client/e2ee_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/e2ee_client.py#L248)
 
-### 3. block / unblock / remove contact
+### 2. block / unblock / remove contact
 
 为什么要做：
 
@@ -59,7 +41,7 @@
 - [server/main.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/server/main.py#L517)
 - [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L19)
 
-### 4. CLI 翻页
+### 3. CLI 翻页
 
 为什么要做：
 
@@ -77,7 +59,7 @@
 - [client/api_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/api_client.py#L83)
 - [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L257)
 
-### 5. TLS
+### 4. TLS
 
 为什么要做：
 
@@ -93,7 +75,7 @@
 - [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L296)
 - [client/ws_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/ws_client.py#L22)
 
-### 6. 本地敏感数据安全存储
+### 5. 本地敏感数据安全存储
 
 为什么要做：
 
@@ -117,6 +99,7 @@
 - 离线密文转发
 - `Sent` / `Delivered`
 - 会话列表、未读数
+- 指纹查看与人工 verified 标记
 - replay protection / duplicate detection
 - CLI 作为 UI 形式本身是符合要求的
 
@@ -130,11 +113,10 @@
 
 ## 最终结论
 
-如果只按 `Project.pdf` 严格看，你现在还必须补这 6 项：
+如果只按 `Project.pdf` 严格看，你现在还必须补这 5 项：
 
-1. 指纹人工验证
-2. trust reset / 重新验证流程
-3. block / unblock / remove contact
-4. CLI 翻页
-5. TLS
-6. 本地敏感数据安全存储
+1. trust reset / 重新验证流程
+2. block / unblock / remove contact
+3. CLI 翻页
+4. TLS
+5. 本地敏感数据安全存储

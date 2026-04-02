@@ -49,6 +49,9 @@ class ClientE2EEManager:
     def _trusted_peer_keys(self) -> dict[str, dict[str, dict[str, str]]]:
         return self.state.setdefault('trusted_peer_keys', {})
 
+    def _verified_peer_keys(self) -> dict[str, dict[str, dict[str, str]]]:
+        return self.state.setdefault('verified_peer_keys', {})
+
     def _replay_cache(self) -> dict[str, dict[str, dict[str, dict[str, Any]]]]:
         return self.state.setdefault('replay_cache', {})
 
@@ -102,6 +105,10 @@ class ClientE2EEManager:
             'fingerprint': peer_identity['fingerprint'],
             'trusted_at': self._utcnow(),
         }
+        verified_store = self._verified_peer_keys().setdefault(local_username.lower(), {})
+        verified = verified_store.get(peer_username.lower())
+        if verified is not None and verified.get('public_key') != peer_identity['public_key']:
+            del verified_store[peer_username.lower()]
         return trust_store[peer_username.lower()]
 
     def _describe_key_change(self, peer_username: str, trusted: dict[str, str], current: dict[str, str]) -> str:
@@ -110,6 +117,19 @@ class ClientE2EEManager:
             f'{trusted["fingerprint"]}, current server fingerprint {current["fingerprint"]}. '
             'refusing to continue until trust is reset'
         )
+
+    def _get_verified_peer(self, local_username: str, peer_username: str, trusted: Optional[dict[str, str]] = None) -> Optional[dict[str, str]]:
+        verified_store = self._verified_peer_keys().setdefault(local_username.lower(), {})
+        verified = verified_store.get(peer_username.lower())
+        if verified is None:
+            return None
+        if trusted is None:
+            del verified_store[peer_username.lower()]
+            return None
+        if trusted is not None and verified.get('public_key') != trusted.get('public_key'):
+            del verified_store[peer_username.lower()]
+            return None
+        return verified
 
     def _peer_replay_cache(self, local_username: str, peer_username: str) -> dict[str, dict[str, Any]]:
         return self._replay_cache().setdefault(local_username.lower(), {}).setdefault(peer_username.lower(), {})
@@ -195,6 +215,7 @@ class ClientE2EEManager:
         trusted.setdefault('device_id', current['device_id'])
         if trusted['public_key'] != current['public_key']:
             raise TrustError(self._describe_key_change(normalized_peer, trusted, current))
+        self._get_verified_peer(normalized_local, normalized_peer, trusted)
         return trusted
 
     def resolve_peer_for_decrypt(self, local_username: str, peer_username: str) -> dict[str, str]:
@@ -204,9 +225,61 @@ class ClientE2EEManager:
         if trusted is not None:
             trusted.setdefault('fingerprint', public_key_fingerprint(trusted['public_key']))
             trusted.setdefault('device_id', DEFAULT_DEVICE_ID)
+            self._get_verified_peer(normalized_local, normalized_peer, trusted)
             return trusted
         current = self._fetch_remote_identity(normalized_peer)
         return self._remember_trusted_peer(normalized_local, normalized_peer, current)
+
+    def get_peer_verification_status(self, local_username: str, peer_username: str) -> dict[str, Any]:
+        normalized_local = local_username.lower()
+        normalized_peer = peer_username.lower()
+        trusted = self._trusted_peer_keys().setdefault(normalized_local, {}).get(normalized_peer)
+        if trusted is not None:
+            trusted.setdefault('fingerprint', public_key_fingerprint(trusted['public_key']))
+            trusted.setdefault('device_id', DEFAULT_DEVICE_ID)
+        current = self._fetch_remote_identity(normalized_peer)
+        verified = self._get_verified_peer(normalized_local, normalized_peer, trusted)
+
+        trust_state = 'untrusted'
+        if trusted is not None:
+            trust_state = 'trusted' if trusted['public_key'] == current['public_key'] else 'mismatch'
+
+        is_verified = bool(verified is not None and trust_state == 'trusted')
+        status: dict[str, Any] = {
+            'peer_username': normalized_peer,
+            'server_device_id': current['device_id'],
+            'server_fingerprint': current['fingerprint'],
+            'trusted_fingerprint': trusted['fingerprint'] if trusted is not None else None,
+            'trusted_at': trusted.get('trusted_at') if trusted is not None else None,
+            'verified': is_verified,
+            'verified_at': verified.get('verified_at') if verified is not None else None,
+            'trust_state': trust_state,
+        }
+        if trust_state == 'mismatch' and trusted is not None:
+            status['warning'] = self._describe_key_change(normalized_peer, trusted, current)
+        return status
+
+    def mark_peer_verified(self, local_username: str, peer_username: str) -> dict[str, str]:
+        normalized_local = local_username.lower()
+        normalized_peer = peer_username.lower()
+        current = self._fetch_remote_identity(normalized_peer)
+        trusted = self._trusted_peer_keys().setdefault(normalized_local, {}).get(normalized_peer)
+        if trusted is None:
+            trusted = self._remember_trusted_peer(normalized_local, normalized_peer, current)
+        else:
+            trusted.setdefault('fingerprint', public_key_fingerprint(trusted['public_key']))
+            trusted.setdefault('device_id', current['device_id'])
+        if trusted['public_key'] != current['public_key']:
+            raise TrustError(self._describe_key_change(normalized_peer, trusted, current))
+
+        verified_store = self._verified_peer_keys().setdefault(normalized_local, {})
+        verified_store[normalized_peer] = {
+            'device_id': trusted['device_id'],
+            'public_key': trusted['public_key'],
+            'fingerprint': trusted['fingerprint'],
+            'verified_at': self._utcnow(),
+        }
+        return verified_store[normalized_peer]
 
     def encrypt_outbound_message(
         self,

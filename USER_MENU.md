@@ -128,10 +128,7 @@ D:\Learning\Year3 Sem2\COMP3334\Project_Code\Code
 
 以下能力在 README 和代码中都明确还没完成：
 
-- 指纹人工验证 UI
 - trust reset CLI
-- 消息 TTL / 自毁
-- 过期消息清理
 - TLS 部署
 - 用户级 block / unblock / remove contact CLI 或 API
 - 多设备安全会话
@@ -187,6 +184,9 @@ Commands:
   conversations
   open <conversation_id> [limit]
   send <username> <message text>
+  send-ttl <username> <ttl_seconds> <message text>
+  fingerprint <username>
+  verify <username>
   mark-read <conversation_id>
   store-dev-key
   exit
@@ -222,6 +222,9 @@ cancel-request <request_id>
 conversations
 open <conversation_id> [limit]
 send <username> <message text>
+send-ttl <username> <ttl_seconds> <message text>
+fingerprint <username>
+verify <username>
 mark-read <conversation_id>
 store-dev-key
 exit
@@ -1683,7 +1686,6 @@ Remove-Item .\client\client_state.json -Force -ErrorAction SilentlyContinue
 
 但它仍是课程原型，不应被误认为已经完成真正的安全即时通信系统。当前最重要的缺口仍然是：
 
-- 没有指纹人工验证和 trust reset
-- 没有 TTL / expiry cleanup
+- 没有 trust reset
 - 没有 block / unblock / remove contact 管理
 - 没有 TLS

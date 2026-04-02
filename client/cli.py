@@ -34,6 +34,8 @@ Commands:
   open <conversation_id> [limit]
   send <username> <message text>
   send-ttl <username> <ttl_seconds> <message text>
+  fingerprint <username>         # show the peer's current fingerprint and local verification state
+  verify <username>              # mark the peer's current trusted fingerprint as manually verified
   mark-read <conversation_id>
   store-dev-key                # ensures and republishes the real E2EE identity key for this device
   exit
@@ -126,6 +128,24 @@ class IMCli:
         identity = self.e2ee.publish_identity(username)
         self._persist()
         return {'ok': True, 'message': 'identity public key stored'}, identity
+
+    @staticmethod
+    def _format_verification_status(status: dict[str, Any]) -> str:
+        lines = [
+            f"peer: {status.get('peer_username')}",
+            f"server device: {status.get('server_device_id')}",
+            f"server fingerprint: {status.get('server_fingerprint')}",
+            f"trusted fingerprint: {status.get('trusted_fingerprint') or 'not trusted locally yet'}",
+            f"trust state: {status.get('trust_state')}",
+            f"verified: {'yes' if status.get('verified') else 'no'}",
+        ]
+        if status.get('verified_at'):
+            lines.append(f"verified at: {status.get('verified_at')}")
+        if status.get('trusted_at'):
+            lines.append(f"trusted at: {status.get('trusted_at')}")
+        if status.get('warning'):
+            lines.append(f"warning: {status.get('warning')}")
+        return '\n'.join(lines)
 
     def _display_message_content(self, message_payload: dict[str, Any], *, context: str = 'history') -> str:
         if self._is_message_expired(message_payload):
@@ -364,6 +384,20 @@ class IMCli:
                 f"(E2EE sender fingerprint {identity['fingerprint']}; "
                 f"trusted peer fingerprint {peer['fingerprint']})"
             )
+        elif cmd == 'fingerprint':
+            if len(parts) < 2:
+                raise RuntimeError('usage: fingerprint <username>')
+            status = self.e2ee.get_peer_verification_status(self._current_username(), parts[1])
+            self._persist()
+            print(self._format_verification_status(status))
+        elif cmd == 'verify':
+            if len(parts) < 2:
+                raise RuntimeError('usage: verify <username>')
+            verified = self.e2ee.mark_peer_verified(self._current_username(), parts[1])
+            status = self.e2ee.get_peer_verification_status(self._current_username(), parts[1])
+            self._persist()
+            print(f"verified peer {parts[1].lower()} fingerprint {verified['fingerprint']}")
+            print(self._format_verification_status(status))
         elif cmd == 'mark-read':
             if len(parts) < 2:
                 raise RuntimeError('usage: mark-read <conversation_id>')

@@ -13,6 +13,7 @@ def default_state() -> dict[str, Any]:
         'username': None,
         'device_keys': {},
         'trusted_peer_keys': {},
+        'verified_peer_keys': {},
         'replay_cache': {},
     }
 
@@ -21,7 +22,7 @@ def normalize_state(state: Any) -> dict[str, Any]:
     normalized = default_state()
     if not isinstance(state, dict):
         return normalized
-    for key in ('known_otp_secrets', 'device_keys', 'trusted_peer_keys', 'replay_cache'):
+    for key in ('known_otp_secrets', 'device_keys', 'trusted_peer_keys', 'verified_peer_keys', 'replay_cache'):
         value = state.get(key)
         if isinstance(value, dict):
             normalized[key] = value
@@ -86,6 +87,7 @@ def save_state(state: dict[str, Any]) -> None:
     merged = dict(current)
     for key in ('known_otp_secrets', 'device_keys', 'trusted_peer_keys'):
         merged[key] = _merge_dicts(current.get(key, {}), incoming.get(key, {}))
+    merged['verified_peer_keys'] = incoming.get('verified_peer_keys', {})
     merged['replay_cache'] = _trim_replay_cache(_merge_dicts(current.get('replay_cache', {}), incoming.get('replay_cache', {})))
     merged['access_token'] = incoming.get('access_token')
     merged['username'] = incoming.get('username')
