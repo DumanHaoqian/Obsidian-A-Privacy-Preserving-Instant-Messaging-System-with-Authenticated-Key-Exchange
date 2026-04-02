@@ -36,6 +36,7 @@ Commands:
   send-ttl <username> <ttl_seconds> <message text>
   fingerprint <username>         # show the peer's current fingerprint and local verification state
   verify <username>              # mark the peer's current trusted fingerprint as manually verified
+  reset-trust <username>         # adopt the peer's current key and require manual re-verification
   mark-read <conversation_id>
   store-dev-key                # ensures and republishes the real E2EE identity key for this device
   exit
@@ -138,9 +139,12 @@ class IMCli:
             f"trusted fingerprint: {status.get('trusted_fingerprint') or 'not trusted locally yet'}",
             f"trust state: {status.get('trust_state')}",
             f"verified: {'yes' if status.get('verified') else 'no'}",
+            f"verification required: {'yes' if status.get('verification_required') else 'no'}",
         ]
         if status.get('verified_at'):
             lines.append(f"verified at: {status.get('verified_at')}")
+        if status.get('reverify_required_at'):
+            lines.append(f"reverify required at: {status.get('reverify_required_at')}")
         if status.get('trusted_at'):
             lines.append(f"trusted at: {status.get('trusted_at')}")
         if status.get('warning'):
@@ -397,6 +401,17 @@ class IMCli:
             status = self.e2ee.get_peer_verification_status(self._current_username(), parts[1])
             self._persist()
             print(f"verified peer {parts[1].lower()} fingerprint {verified['fingerprint']}")
+            print(self._format_verification_status(status))
+        elif cmd == 'reset-trust':
+            if len(parts) < 2:
+                raise RuntimeError('usage: reset-trust <username>')
+            reset = self.e2ee.reset_peer_trust(self._current_username(), parts[1])
+            status = self.e2ee.get_peer_verification_status(self._current_username(), parts[1])
+            self._persist()
+            print(
+                f"reset local trust for {parts[1].lower()} to fingerprint {reset['fingerprint']}; "
+                f"manual re-verification is now required"
+            )
             print(self._format_verification_status(status))
         elif cmd == 'mark-read':
             if len(parts) < 2:

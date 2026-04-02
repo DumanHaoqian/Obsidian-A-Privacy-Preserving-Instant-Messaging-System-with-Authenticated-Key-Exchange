@@ -4,24 +4,7 @@
 
 ## 还必须做的
 
-### 1. 换钥后的 trust reset / 重新验证流程
-
-为什么要做：
-
-- `R6` 明确要求 key change detection，而且换钥后要有明确策略
-
-当前缺口：
-
-- 现在只能检测到换钥并拒绝继续
-- 但没有用户可操作的 trust reset / re-verify 流程
-
-代码证据：
-
-- [client/e2ee_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/e2ee_client.py#L107)
-- [client/e2ee_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/e2ee_client.py#L187)
-- [client/e2ee_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/e2ee_client.py#L248)
-
-### 2. block / unblock / remove contact
+### 1. block / unblock / remove contact
 
 为什么要做：
 
@@ -41,7 +24,7 @@
 - [server/main.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/server/main.py#L517)
 - [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L19)
 
-### 3. CLI 翻页
+### 2. CLI 翻页
 
 为什么要做：
 
@@ -59,7 +42,7 @@
 - [client/api_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/api_client.py#L83)
 - [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L257)
 
-### 4. TLS
+### 3. TLS
 
 为什么要做：
 
@@ -75,7 +58,7 @@
 - [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L296)
 - [client/ws_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/ws_client.py#L22)
 
-### 5. 本地敏感数据安全存储
+### 4. 本地敏感数据安全存储
 
 为什么要做：
 
@@ -100,6 +83,7 @@
 - `Sent` / `Delivered`
 - 会话列表、未读数
 - 指纹查看与人工 verified 标记
+- trust reset / 重新验证流程
 - replay protection / duplicate detection
 - CLI 作为 UI 形式本身是符合要求的
 
@@ -113,10 +97,9 @@
 
 ## 最终结论
 
-如果只按 `Project.pdf` 严格看，你现在还必须补这 5 项：
+如果只按 `Project.pdf` 严格看，你现在还必须补这 4 项：
 
-1. trust reset / 重新验证流程
-2. block / unblock / remove contact
-3. CLI 翻页
-4. TLS
-5. 本地敏感数据安全存储
+1. block / unblock / remove contact
+2. CLI 翻页
+3. TLS
+4. 本地敏感数据安全存储

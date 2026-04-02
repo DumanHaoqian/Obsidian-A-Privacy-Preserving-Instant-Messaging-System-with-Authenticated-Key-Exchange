@@ -14,7 +14,7 @@ The current CLI encrypts message bodies locally before upload and decrypts them 
 For `e2ee_text` messages the server stores ciphertext envelopes, not plaintext.
 
 This is still a prototype, not a full modern messaging protocol.
-It does not yet implement TLS, trust-reset flow, or multi-device secure sessions.
+It does not yet implement TLS or multi-device secure sessions.
 
 ## Companion documents
 
@@ -22,6 +22,7 @@ It does not yet implement TLS, trust-reset flow, or multi-device secure sessions
 - `E2EE_IMPLEMENTATION.md`: detailed notes about the current E2EE V1 design
 - `Tech_Doc/TTL_SELF_DESTRUCT_IMPLEMENTATION.md`: TTL / self-destruct design and validation notes
 - `Tech_Doc/FINGERPRINT_VERIFICATION_IMPLEMENTATION.md`: manual fingerprint verification design and validation notes
+- `Tech_Doc/TRUST_RESET_IMPLEMENTATION.md`: key-change trust reset design and validation notes
 
 ## Repository layout
 
@@ -172,11 +173,11 @@ What exists today:
 - `fingerprint <username>` shows the peer's current fingerprint, trusted fingerprint, and verification state
 - `verify <username>` marks the current trusted fingerprint as manually verified in local state
 - key changes are detected
+- `reset-trust <username>` adopts the peer's current server key as the new trusted candidate and blocks messaging until the user verifies again
 - the client refuses to silently continue after a key mismatch
 
 What does not exist yet:
 
-- no trust-reset command in the CLI
 - no multi-device trust management
 
 ### How the current encrypted flow works
@@ -208,6 +209,7 @@ Current keys in that file:
 - `device_keys`
 - `trusted_peer_keys`
 - `verified_peer_keys`
+- `reverify_required_peer_keys`
 - `replay_cache`
 
 This means the local state file currently holds sensitive data in plaintext JSON, including:
@@ -217,6 +219,7 @@ This means the local state file currently holds sensitive data in plaintext JSON
 - private identity keys
 - trusted peer public keys
 - locally stored peer verification records
+- locally stored pending re-verification records after trust reset
 - replay tokens for duplicate detection
 
 Logging out clears the current `access_token` and `username`, but it does not delete stored OTP secrets, device keys, or trusted peer keys.
@@ -465,7 +468,6 @@ Server-side pushed events currently used by the system:
 ### Partially implemented
 
 - replay protection: new encrypted messages carry a replay token and duplicate deliveries are detected locally, but legacy V1 messages remain unprotected
-- key-change handling: trust mismatches are detected and blocked, but there is no user-facing trust reset flow
 - blocking/removing: the schema and enforcement hooks exist, but there is no block/unblock/remove contact CLI or API surface
 
 ### Not implemented yet
@@ -494,8 +496,7 @@ Server-side pushed events currently used by the system:
 
 The most important missing items for the course project are:
 
-1. trust-reset workflow after key changes
-2. block/unblock and contact removal management
-3. TLS for transport security
-4. secure local storage for client secrets and private keys
-5. stronger forward-secrecy-oriented session design
+1. block/unblock and contact removal management
+2. TLS for transport security
+3. secure local storage for client secrets and private keys
+4. stronger forward-secrecy-oriented session design

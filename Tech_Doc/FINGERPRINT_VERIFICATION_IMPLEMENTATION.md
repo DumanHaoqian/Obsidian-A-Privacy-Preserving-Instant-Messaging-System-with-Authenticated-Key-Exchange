@@ -7,7 +7,7 @@
 - 能向用户显示联系人设备身份公钥的指纹
 - 能让用户把联系人当前公钥标记为本地 `verified`
 
-这次实现故意保持简单，不做复杂的安全号码系统，也不把它扩展成完整的 trust reset 机制。当前目标只是把 `R5` 做到“基础简单，能用就好”。
+这次实现故意保持简单，不做复杂的安全号码系统。当前目标只是把 `R5` 做到“基础简单，能用就好”。
 
 ## 2. 本次设计
 
@@ -70,8 +70,7 @@ verify <username>
 
 注意：
 
-- 这不等于已经实现 trust reset
-- trust reset 仍然是后续要补的 `R6` 缺口
+- trust reset 属于单独的 `R6` 功能，已在另一份文档中说明
 
 ## 3. 实现位置
 
@@ -108,7 +107,7 @@ verify <username>
 实现要点：
 
 - 如果还没有本地 trusted key，`verify` 会先获取当前公钥并建立 trusted 记录
-- 如果当前 server key 和本地 trusted key 不一致，则拒绝 verify，并交给后续 trust reset 处理
+- 如果当前 server key 和本地 trusted key 不一致，则拒绝 verify，并要求先走 trust reset 流程
 - 如果 verified 记录和当前 trusted key 不一致，会自动视为失效
 
 ### 3.3 CLI
@@ -262,7 +261,7 @@ OK
 - 指纹是 SHA-256 十六进制字符串，不是更复杂的 safety number
 - verified 只保存在本地状态文件中，不跨设备同步
 - 目前只实现了 `R5`
-- trust reset 仍然没有做
+- trust reset 是单独的功能，不在这份 `R5` 文档中展开
 
 ## 8. 结论
 
