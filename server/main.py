@@ -40,6 +40,7 @@ from .schemas import (
     MessageSendRequest,
     RegisterRequest,
     RegisterResponse,
+    UsernameTargetRequest,
 )
 from .security import (
     generate_otp_secret,
@@ -148,6 +149,76 @@ def get_or_create_conversation(cur: sqlite3.Cursor, user_a: int, user_b: int) ->
     return int(cur.lastrowid)
 
 
+def refresh_conversation_summary(cur: sqlite3.Cursor, conversation_id: int) -> None:
+    cur.execute(
+        'SELECT id, created_at FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1',
+        (conversation_id,),
+    )
+    latest = cur.fetchone()
+    if latest:
+        cur.execute(
+            'UPDATE conversations SET last_message_id = ?, last_message_at = ? WHERE id = ?',
+            (latest['id'], latest['created_at'], conversation_id),
+        )
+    else:
+        cur.execute(
+            'UPDATE conversations SET last_message_id = NULL, last_message_at = NULL WHERE id = ?',
+            (conversation_id,),
+        )
+
+
+def remove_contact_links(cur: sqlite3.Cursor, user_a: int, user_b: int) -> int:
+    cur.execute(
+        """
+        DELETE FROM contacts
+        WHERE (user_id = ? AND contact_user_id = ?)
+           OR (user_id = ? AND contact_user_id = ?)
+        """,
+        (user_a, user_b, user_b, user_a),
+    )
+    return cur.rowcount
+
+
+def delete_pending_friend_requests_between(cur: sqlite3.Cursor, user_a: int, user_b: int) -> int:
+    cur.execute(
+        """
+        DELETE FROM friend_requests
+        WHERE status = 'pending'
+          AND (
+            (from_user_id = ? AND to_user_id = ?)
+            OR
+            (from_user_id = ? AND to_user_id = ?)
+          )
+        """,
+        (user_a, user_b, user_b, user_a),
+    )
+    return cur.rowcount
+
+
+def drop_undelivered_incoming_messages(cur: sqlite3.Cursor, receiver_id: int, blocked_sender_id: int) -> int:
+    cur.execute(
+        """
+        SELECT id, conversation_id
+        FROM messages
+        WHERE sender_id = ? AND receiver_id = ? AND delivered_at IS NULL
+        """,
+        (blocked_sender_id, receiver_id),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return 0
+
+    message_ids = [int(row['id']) for row in rows]
+    conversation_ids = sorted({int(row['conversation_id']) for row in rows})
+    cur.execute(
+        f"DELETE FROM messages WHERE id IN ({','.join(['?'] * len(message_ids))})",
+        tuple(message_ids),
+    )
+    for conversation_id in conversation_ids:
+        refresh_conversation_summary(cur, conversation_id)
+    return len(message_ids)
+
+
 def build_message_payload(cur: sqlite3.Cursor, message_id: int) -> dict[str, Any]:
     cur.execute(
         """
@@ -214,21 +285,7 @@ def cleanup_expired_messages(force: bool = False) -> int:
                 tuple(message_ids),
             )
             for conversation_id in conversation_ids:
-                cur.execute(
-                    'SELECT id, created_at FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1',
-                    (conversation_id,),
-                )
-                latest = cur.fetchone()
-                if latest:
-                    cur.execute(
-                        'UPDATE conversations SET last_message_id = ?, last_message_at = ? WHERE id = ?',
-                        (latest['id'], latest['created_at'], conversation_id),
-                    )
-                else:
-                    cur.execute(
-                        'UPDATE conversations SET last_message_id = NULL, last_message_at = NULL WHERE id = ?',
-                        (conversation_id,),
-                    )
+                refresh_conversation_summary(cur, conversation_id)
 
         _last_expiry_cleanup_monotonic = time.monotonic()
         return len(expired_rows)
@@ -476,6 +533,16 @@ async def friend_request_respond(payload: FriendRequestRespondRequest, current_u
             raise HTTPException(status_code=400, detail=f'request already {row["status"]}')
         new_status = 'accepted' if payload.action == 'accept' else 'declined'
         cur.execute(
+            """
+            DELETE FROM friend_requests
+            WHERE id != ?
+              AND from_user_id = ?
+              AND to_user_id = ?
+              AND status = ?
+            """,
+            (payload.request_id, row['from_user_id'], row['to_user_id'], new_status),
+        )
+        cur.execute(
             'UPDATE friend_requests SET status = ?, responded_at = ? WHERE id = ?',
             (new_status, utcnow(), payload.request_id),
         )
@@ -537,6 +604,16 @@ def friend_request_cancel(payload: FriendRequestCancelRequest, current_user: sql
             raise HTTPException(status_code=403, detail='you are not the sender of this request')
         if row['status'] != 'pending':
             raise HTTPException(status_code=400, detail='only pending requests can be canceled')
+        cur.execute(
+            """
+            DELETE FROM friend_requests
+            WHERE id != ?
+              AND from_user_id = ?
+              AND to_user_id = ?
+              AND status = 'cancelled'
+            """,
+            (payload.request_id, row['from_user_id'], row['to_user_id']),
+        )
         cur.execute('UPDATE friend_requests SET status = ?, responded_at = ? WHERE id = ?', ('cancelled', utcnow(), payload.request_id))
     return BasicResponse(message='friend request cancelled')
 
@@ -555,6 +632,87 @@ def contacts(current_user: sqlite3.Row = Depends(get_current_user)) -> dict[str,
             (current_user['id'],),
         )
         return {'contacts': [dict(row) for row in cur.fetchall()]}
+
+
+@app.post('/contacts/remove', response_model=BasicResponse)
+def remove_contact(payload: UsernameTargetRequest, current_user: sqlite3.Row = Depends(get_current_user)) -> BasicResponse:
+    with db_cursor(commit=True) as cur:
+        target = fetch_user_by_username(cur, payload.target_username)
+        if not target:
+            raise HTTPException(status_code=404, detail='target user not found')
+        if target['id'] == current_user['id']:
+            raise HTTPException(status_code=400, detail='cannot remove yourself from contacts')
+        removed_links = remove_contact_links(cur, current_user['id'], target['id'])
+    if removed_links:
+        return BasicResponse(message=f'removed contact relationship with {target["username"]}')
+    return BasicResponse(message=f'{target["username"]} was not in your contacts')
+
+
+@app.get('/blocks')
+def blocks(current_user: sqlite3.Row = Depends(get_current_user)) -> dict[str, Any]:
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.id, u.username, b.created_at
+            FROM blocks b
+            JOIN users u ON u.id = b.blocked_user_id
+            WHERE b.user_id = ?
+            ORDER BY u.username ASC
+            """,
+            (current_user['id'],),
+        )
+        return {'blocked_users': [dict(row) for row in cur.fetchall()]}
+
+
+@app.post('/blocks/block', response_model=BasicResponse)
+def block_user(payload: UsernameTargetRequest, current_user: sqlite3.Row = Depends(get_current_user)) -> BasicResponse:
+    with db_cursor(commit=True) as cur:
+        target = fetch_user_by_username(cur, payload.target_username)
+        if not target:
+            raise HTTPException(status_code=404, detail='target user not found')
+        if target['id'] == current_user['id']:
+            raise HTTPException(status_code=400, detail='cannot block yourself')
+
+        already_blocked = is_blocked(cur, current_user['id'], target['id'])
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO blocks (user_id, blocked_user_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (current_user['id'], target['id'], utcnow()),
+        )
+        removed_links = remove_contact_links(cur, current_user['id'], target['id'])
+        deleted_requests = delete_pending_friend_requests_between(cur, current_user['id'], target['id'])
+        dropped_messages = drop_undelivered_incoming_messages(cur, current_user['id'], target['id'])
+
+    details = [
+        f'{target["username"]} was already blocked' if already_blocked else f'blocked user {target["username"]}'
+    ]
+    if removed_links:
+        details.append('removed contact relationship')
+    if deleted_requests:
+        details.append(f'cleared {deleted_requests} pending friend request(s)')
+    if dropped_messages:
+        details.append(f'ignored {dropped_messages} undelivered incoming message(s)')
+    return BasicResponse(message='; '.join(details))
+
+
+@app.post('/blocks/unblock', response_model=BasicResponse)
+def unblock_user(payload: UsernameTargetRequest, current_user: sqlite3.Row = Depends(get_current_user)) -> BasicResponse:
+    with db_cursor(commit=True) as cur:
+        target = fetch_user_by_username(cur, payload.target_username)
+        if not target:
+            raise HTTPException(status_code=404, detail='target user not found')
+        if target['id'] == current_user['id']:
+            raise HTTPException(status_code=400, detail='cannot unblock yourself')
+        cur.execute(
+            'DELETE FROM blocks WHERE user_id = ? AND blocked_user_id = ?',
+            (current_user['id'], target['id']),
+        )
+        removed_blocks = cur.rowcount
+    if removed_blocks:
+        return BasicResponse(message=f'unblocked user {target["username"]}')
+    return BasicResponse(message=f'{target["username"]} was not blocked')
 
 
 # ------------------------------

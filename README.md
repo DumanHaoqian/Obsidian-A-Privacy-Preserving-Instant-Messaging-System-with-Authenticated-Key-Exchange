@@ -23,6 +23,7 @@ It does not yet implement TLS or multi-device secure sessions.
 - `Tech_Doc/TTL_SELF_DESTRUCT_IMPLEMENTATION.md`: TTL / self-destruct design and validation notes
 - `Tech_Doc/FINGERPRINT_VERIFICATION_IMPLEMENTATION.md`: manual fingerprint verification design and validation notes
 - `Tech_Doc/TRUST_RESET_IMPLEMENTATION.md`: key-change trust reset design and validation notes
+- `Tech_Doc/BLOCK_CONTACT_MANAGEMENT_IMPLEMENTATION.md`: block / unblock / remove-contact design and validation notes
 
 ## Repository layout
 
@@ -78,6 +79,10 @@ Important demo behavior:
 - accept or decline a received request
 - cancel a sent pending request
 - contacts list after acceptance
+- block a user
+- unblock a user
+- remove a contact
+- list blocked users
 - contacts-only messaging by default
 
 ### Messaging and conversation flow
@@ -249,7 +254,7 @@ Important storage facts:
 - encrypted message envelopes are stored in `messages.content`
 - plaintext API messages, if used, are also stored in `messages.content`
 - `blocks` exists in the schema and is enforced by message/request checks
-- there is no exposed block/unblock CLI or API route in the current code
+- the current CLI and API expose `block`, `unblock`, `remove-contact`, and blocked-user listing
 
 ## Limits and defaults
 
@@ -379,13 +384,21 @@ login <username> <password>
 logout
 me
 contacts
+blocked
 pending
 send-request <username>
 respond <request_id> <accept|decline>
 cancel-request <request_id>
+remove-contact <username>
+block <username>
+unblock <username>
 conversations
 open <conversation_id> [limit]
 send <username> <message text>
+send-ttl <username> <ttl_seconds> <message text>
+fingerprint <username>
+verify <username>
+reset-trust <username>
 mark-read <conversation_id>
 store-dev-key
 exit
@@ -420,6 +433,10 @@ Notes:
 - `POST /friend-request/respond`
 - `POST /friend-request/cancel`
 - `GET /contacts`
+- `POST /contacts/remove`
+- `GET /blocks`
+- `POST /blocks/block`
+- `POST /blocks/unblock`
 
 ### Messages and conversations
 
@@ -459,6 +476,7 @@ Server-side pushed events currently used by the system:
 - authenticated encryption with metadata binding
 - basic replay protection / duplicate detection for new encrypted messages
 - friend request send / accept / decline / cancel
+- block / unblock / remove contact management
 - contacts-only messaging by default
 - sent / delivered status, with delivered triggered by recipient client acknowledgement
 - offline store-and-forward for the current encrypted CLI flow
@@ -468,7 +486,6 @@ Server-side pushed events currently used by the system:
 ### Partially implemented
 
 - replay protection: new encrypted messages carry a replay token and duplicate deliveries are detected locally, but legacy V1 messages remain unprotected
-- blocking/removing: the schema and enforcement hooks exist, but there is no block/unblock/remove contact CLI or API surface
 
 ### Not implemented yet
 
@@ -487,6 +504,7 @@ Server-side pushed events currently used by the system:
 - `delivered` means the recipient client called `/messages/ack` after receipt. It is not a read receipt.
 - delivery acknowledgements are server-visible control messages; they are not E2EE payloads
 - In the current CLI, delivery ack is still attempted after duplicate/replay detection or decryption error placeholders so the server stops resending the message.
+- Blocking a user removes the bidirectional contact relationship, deletes pending friend requests between the pair, and drops undelivered incoming messages from that blocked user.
 - `open` marks returned unread messages as read by default.
 - The WebSocket listener retries on connection errors and clears the local session if reconnect fails with authentication errors.
 - `MESSAGE_RETENTION_DAYS = 7` exists in config but is not currently enforced as a general max-age retention rule in the server logic.
@@ -496,7 +514,6 @@ Server-side pushed events currently used by the system:
 
 The most important missing items for the course project are:
 
-1. block/unblock and contact removal management
-2. TLS for transport security
-3. secure local storage for client secrets and private keys
-4. stronger forward-secrecy-oriented session design
+1. TLS for transport security
+2. secure local storage for client secrets and private keys
+3. stronger forward-secrecy-oriented session design

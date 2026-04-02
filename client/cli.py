@@ -26,10 +26,14 @@ Commands:
   logout
   me
   contacts
+  blocked
   pending
   send-request <username>      # must match the recipient's registered username exactly
   respond <request_id> <accept|decline>
   cancel-request <request_id>
+  remove-contact <username>
+  block <username>
+  unblock <username>
   conversations
   open <conversation_id> [limit]
   send <username> <message text>
@@ -314,6 +318,8 @@ class IMCli:
             print(self.api.me())
         elif cmd == 'contacts':
             print(self.api.contacts())
+        elif cmd == 'blocked':
+            print(self.api.blocked_users())
         elif cmd == 'pending':
             print(self.api.pending_requests())
         elif cmd == 'send-request':
@@ -334,6 +340,18 @@ class IMCli:
             if len(parts) < 2:
                 raise RuntimeError('usage: cancel-request <request_id>')
             print(self.api.cancel_friend_request(int(parts[1])))
+        elif cmd == 'remove-contact':
+            if len(parts) < 2:
+                raise RuntimeError('usage: remove-contact <username>')
+            print(self.api.remove_contact(parts[1]))
+        elif cmd == 'block':
+            if len(parts) < 2:
+                raise RuntimeError('usage: block <username>')
+            print(self.api.block_user(parts[1]))
+        elif cmd == 'unblock':
+            if len(parts) < 2:
+                raise RuntimeError('usage: unblock <username>')
+            print(self.api.unblock_user(parts[1]))
         elif cmd == 'conversations':
             print(self.api.conversations())
         elif cmd == 'open':

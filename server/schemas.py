@@ -72,6 +72,18 @@ class FriendRequestCancelRequest(BaseModel):
     request_id: int
 
 
+class UsernameTargetRequest(BaseModel):
+    target_username: str = Field(min_length=3, max_length=32)
+
+    @field_validator('target_username')
+    @classmethod
+    def validate_target_username(cls, value: str) -> str:
+        value = value.strip()
+        if not value.replace('_', '').replace('-', '').isalnum():
+            raise ValueError('username may only contain letters, digits, underscore, hyphen')
+        return value.lower()
+
+
 class MessageSendRequest(BaseModel):
     to_username: str
     content: str = Field(min_length=1, max_length=16000)

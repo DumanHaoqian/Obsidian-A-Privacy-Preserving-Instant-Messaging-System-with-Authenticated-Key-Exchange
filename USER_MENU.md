@@ -129,7 +129,6 @@ D:\Learning\Year3 Sem2\COMP3334\Project_Code\Code
 以下能力在 README 和代码中都明确还没完成：
 
 - TLS 部署
-- 用户级 block / unblock / remove contact CLI 或 API
 - 多设备安全会话
 - 本地状态加密 / keychain 集成
 - CLI 没有直接继续使用 `before_id` 的翻页命令，虽然 HTTP API 支持分页
@@ -176,10 +175,14 @@ Commands:
   logout
   me
   contacts
+  blocked
   pending
   send-request <username>
   respond <request_id> <accept|decline>
   cancel-request <request_id>
+  remove-contact <username>
+  block <username>
+  unblock <username>
   conversations
   open <conversation_id> [limit]
   send <username> <message text>
@@ -215,10 +218,14 @@ login <username> <password>
 logout
 me
 contacts
+blocked
 pending
 send-request <username>
 respond <request_id> <accept|decline>
 cancel-request <request_id>
+remove-contact <username>
+block <username>
+unblock <username>
 conversations
 open <conversation_id> [limit]
 send <username> <message text>
@@ -255,13 +262,21 @@ Commands:
   logout
   me
   contacts
+  blocked
   pending
   send-request <username>
   respond <request_id> <accept|decline>
   cancel-request <request_id>
+  remove-contact <username>
+  block <username>
+  unblock <username>
   conversations
   open <conversation_id> [limit]
   send <username> <message text>
+  send-ttl <username> <ttl_seconds> <message text>
+  fingerprint <username>
+  verify <username>
+  reset-trust <username>
   mark-read <conversation_id>
   store-dev-key
   exit
@@ -1089,7 +1104,7 @@ error: usage: send <username> <message text>
 - 让对方先登录一次，或让对方执行 `store-dev-key`
 - 如果你确认是合法环境重置，删除本地状态和数据库后重新建立信任
 - 缩短消息长度
-- 若是 block，需要修改数据库或后续实现 block 管理功能
+- 若是 block，先用 `blocked` 查看，再用 `unblock <username>` 解除
 
 ### 5.14 `mark-read <conversation_id>`
 
@@ -1687,5 +1702,4 @@ Remove-Item .\client\client_state.json -Force -ErrorAction SilentlyContinue
 
 但它仍是课程原型，不应被误认为已经完成真正的安全即时通信系统。当前最重要的缺口仍然是：
 
-- 没有 block / unblock / remove contact 管理
 - 没有 TLS

@@ -4,27 +4,7 @@
 
 ## 还必须做的
 
-### 1. block / unblock / remove contact
-
-为什么要做：
-
-- `R15` 明确要求 users can remove friends and block users
-
-当前缺口：
-
-- 数据库有 `blocks` 表
-- 发送请求和消息时也会检查 block
-- 但没有 block / unblock / remove contact 的 CLI 或 API
-
-代码证据：
-
-- [server/db.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/server/db.py#L118)
-- [server/main.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/server/main.py#L126)
-- [server/main.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/server/main.py#L319)
-- [server/main.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/server/main.py#L517)
-- [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L19)
-
-### 2. CLI 翻页
+### 1. CLI 翻页
 
 为什么要做：
 
@@ -42,7 +22,7 @@
 - [client/api_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/api_client.py#L83)
 - [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L257)
 
-### 3. TLS
+### 2. TLS
 
 为什么要做：
 
@@ -58,7 +38,7 @@
 - [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L296)
 - [client/ws_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/ws_client.py#L22)
 
-### 4. 本地敏感数据安全存储
+### 3. 本地敏感数据安全存储
 
 为什么要做：
 
@@ -78,6 +58,7 @@
 - 注册、密码哈希、登录限流、密码 + OTP 登录、登出
 - 1:1 E2EE 私聊
 - 好友请求发送 / 接受 / 拒绝 / 取消
+- `block` / `unblock` / `remove-contact`
 - 非联系人默认不能直接发消息
 - 离线密文转发
 - `Sent` / `Delivered`
@@ -97,9 +78,8 @@
 
 ## 最终结论
 
-如果只按 `Project.pdf` 严格看，你现在还必须补这 4 项：
+如果只按 `Project.pdf` 严格看，你现在还必须补这 3 项：
 
-1. block / unblock / remove contact
-2. CLI 翻页
-3. TLS
-4. 本地敏感数据安全存储
+1. CLI 翻页
+2. TLS
+3. 本地敏感数据安全存储

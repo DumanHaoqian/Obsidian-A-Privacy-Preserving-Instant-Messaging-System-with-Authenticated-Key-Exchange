@@ -70,6 +70,18 @@ class ApiClient:
     def contacts(self) -> Any:
         return self._handle(self.http.get('/contacts', headers=self._headers()))
 
+    def blocked_users(self) -> Any:
+        return self._handle(self.http.get('/blocks', headers=self._headers()))
+
+    def block_user(self, target_username: str) -> Any:
+        return self._handle(self.http.post('/blocks/block', json={'target_username': target_username}, headers=self._headers()))
+
+    def unblock_user(self, target_username: str) -> Any:
+        return self._handle(self.http.post('/blocks/unblock', json={'target_username': target_username}, headers=self._headers()))
+
+    def remove_contact(self, target_username: str) -> Any:
+        return self._handle(self.http.post('/contacts/remove', json={'target_username': target_username}, headers=self._headers()))
+
     def send_message(
         self,
         to_username: str,
