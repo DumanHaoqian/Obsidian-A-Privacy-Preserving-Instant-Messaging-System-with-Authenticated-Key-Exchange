@@ -4,25 +4,7 @@
 
 ## 还必须做的
 
-### 1. CLI 翻页
-
-为什么要做：
-
-- `R25` 明确要求 basic pagination or incremental loading
-
-当前缺口：
-
-- 后端已经支持 `before_id`
-- 但 CLI 只有 `open <conversation_id> [limit]`
-- 不能继续加载更早消息
-
-代码证据：
-
-- [server/main.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/server/main.py#L591)
-- [client/api_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/api_client.py#L83)
-- [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L257)
-
-### 2. TLS
+### 1. TLS
 
 为什么要做：
 
@@ -38,7 +20,7 @@
 - [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L296)
 - [client/ws_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/ws_client.py#L22)
 
-### 3. 本地敏感数据安全存储
+### 2. 本地敏感数据安全存储
 
 为什么要做：
 
@@ -63,6 +45,7 @@
 - 离线密文转发
 - `Sent` / `Delivered`
 - 会话列表、未读数
+- CLI 翻页 / incremental loading
 - 指纹查看与人工 verified 标记
 - trust reset / 重新验证流程
 - replay protection / duplicate detection
@@ -78,8 +61,7 @@
 
 ## 最终结论
 
-如果只按 `Project.pdf` 严格看，你现在还必须补这 3 项：
+如果只按 `Project.pdf` 严格看，你现在还必须补这 2 项：
 
-1. CLI 翻页
-2. TLS
-3. 本地敏感数据安全存储
+1. TLS
+2. 本地敏感数据安全存储

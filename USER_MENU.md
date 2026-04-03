@@ -16,6 +16,7 @@ What changed:
 - The server stores the encrypted JSON envelope in `messages.content`.
 - `message_type` for new encrypted messages is now `e2ee_text`.
 - `open <conversation_id> [limit]` decrypts locally before printing history.
+- `more <conversation_id> [limit]` continues loading older history using the saved paging cursor from the latest `open` or `more`.
 - WebSocket `new_message` events decrypt locally before the CLI shows message text.
 - `store-dev-key` no longer uploads a fake placeholder key; it now ensures a real X25519 identity key exists locally and republishes the matching public key to the server.
 - First contact with a peer uses TOFU trust. If the server later returns a different public key for the same peer, sending is refused.
@@ -131,7 +132,6 @@ D:\Learning\Year3 Sem2\COMP3334\Project_Code\Code
 - TLS 部署
 - 多设备安全会话
 - 本地状态加密 / keychain 集成
-- CLI 没有直接继续使用 `before_id` 的翻页命令，虽然 HTTP API 支持分页
 
 ## 3. 启动方式
 
@@ -185,6 +185,7 @@ Commands:
   unblock <username>
   conversations
   open <conversation_id> [limit]
+  more <conversation_id> [limit]
   send <username> <message text>
   send-ttl <username> <ttl_seconds> <message text>
   fingerprint <username>
@@ -228,6 +229,7 @@ block <username>
 unblock <username>
 conversations
 open <conversation_id> [limit]
+more <conversation_id> [limit]
 send <username> <message text>
 send-ttl <username> <ttl_seconds> <message text>
 fingerprint <username>
@@ -272,6 +274,7 @@ Commands:
   unblock <username>
   conversations
   open <conversation_id> [limit]
+  more <conversation_id> [limit]
   send <username> <message text>
   send-ttl <username> <ttl_seconds> <message text>
   fingerprint <username>
@@ -910,9 +913,9 @@ error: invalid or expired token
 
 #### 功能
 
-拉取某个会话的消息内容。
+拉取某个会话最新一页的消息内容。
 
-CLI 内部固定传 `mark_read=True`，所以使用该命令会顺带把当前用户收到的未读消息标记为已读。
+CLI 内部固定传 `mark_read=True`，所以使用该命令会顺带把当前用户收到的未读消息标记为已读，并把下一页游标保存到本次 CLI 会话里，供 `more` 使用。
 
 #### 命令
 
@@ -946,7 +949,14 @@ open 1 50
 - `created_at`：发送时间
 - `delivered_at`：接收方客户端 ACK 后才会有值
 - `read_at`：已读时间
-- `next_before_id`：用于更老消息分页的游标，当前 CLI 没有继续分页命令
+- `next_before_id`：更老消息分页游标
+- 如果当前页可能还有更老消息，CLI 会额外打印：
+
+```text
+Use: more 1 50  # load older messages
+```
+
+或类似提示
 
 如果消息被判定为 replay，`content` 也可能显示为：
 
@@ -991,7 +1001,81 @@ error: usage: open <conversation_id> [limit]
 - 先执行 `conversations` 查看正确的 `conversation_id`
 - 确保在会话参与者账号下执行
 
-### 5.13 `send <username> <message text>`
+### 5.13 `more <conversation_id> [limit]`
+
+#### 功能
+
+继续拉取同一会话中更早的一页消息。
+
+这个命令依赖当前 CLI 会话里最近一次 `open` 或 `more` 保存下来的分页游标，不需要你自己手动输入 `before_id`。
+
+#### 命令
+
+```text
+more 1
+```
+
+或：
+
+```text
+more 1 50
+```
+
+#### 预期输出
+
+如果还有更早消息：
+
+```text
+{'messages': [{'message_id': 18, 'conversation_id': 1, 'from_username': 'alice', 'to_username': 'bob', 'content': 'older message', 'message_type': 'text', 'status': 'delivered', 'is_offline_queued': False, 'is_read': True, 'created_at': '2026-04-03T02:00:00.000000+00:00', 'delivered_at': '2026-04-03T02:00:01.000000+00:00', 'read_at': '2026-04-03T02:10:00.000000+00:00'}], 'next_before_id': 18}
+Use: more 1 50  # load older messages
+```
+
+如果已经没有更老消息：
+
+```text
+{'messages': [], 'next_before_id': None}
+No older messages remain for conversation 1.
+```
+
+#### 输出解释
+
+- `more` 会自动使用本次 CLI 会话里保存的上一页游标
+- 仍然会本地解密 `e2ee_text`
+- 仍然会对返回的未读消息执行 `mark_read=True`
+- 没有更多历史时，CLI 会给出明确提示
+
+#### 预期报错
+
+```text
+error: no saved paging cursor for conversation 1; run: open 1 [limit] first
+```
+
+```text
+error: conversation not found
+```
+
+```text
+error: not a member of this conversation
+```
+
+```text
+error: usage: more <conversation_id> [limit]
+```
+
+#### 报错原因
+
+- 你还没对这个会话执行过 `open`
+- 会话 ID 不存在
+- 你不属于这个会话
+- 参数缺失或格式错误
+
+#### 解决办法
+
+- 先执行一次 `open <conversation_id> [limit]`
+- 再用 `more <conversation_id> [limit]` 继续翻页
+- 先执行 `conversations` 查正确的会话 ID
+
+### 5.14 `send <username> <message text>`
 
 #### 功能
 
@@ -1106,7 +1190,7 @@ error: usage: send <username> <message text>
 - 缩短消息长度
 - 若是 block，先用 `blocked` 查看，再用 `unblock <username>` 解除
 
-### 5.14 `mark-read <conversation_id>`
+### 5.15 `mark-read <conversation_id>`
 
 #### 功能
 
@@ -1159,7 +1243,7 @@ error: usage: mark-read <conversation_id>
 - 用 `conversations` 先查正确的会话 ID
 - 在对应账号下操作
 
-### 5.15 `store-dev-key`
+### 5.16 `store-dev-key`
 
 #### 功能
 
@@ -1206,7 +1290,7 @@ error: invalid or expired token
 
 - 重新登录后再执行
 
-### 5.16 `exit`
+### 5.17 `exit`
 
 #### 功能
 

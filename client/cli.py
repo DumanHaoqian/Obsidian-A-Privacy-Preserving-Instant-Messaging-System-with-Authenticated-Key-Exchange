@@ -36,6 +36,7 @@ Commands:
   unblock <username>
   conversations
   open <conversation_id> [limit]
+  more <conversation_id> [limit]  # load older messages using the saved cursor from open/more
   send <username> <message text>
   send-ttl <username> <ttl_seconds> <message text>
   fingerprint <username>         # show the peer's current fingerprint and local verification state
@@ -61,6 +62,7 @@ class IMCli:
         self.e2ee = ClientE2EEManager(self.api, self.state)
         self.ws: Optional[WebSocketListener] = None
         self._expiry_timers: dict[int, threading.Timer] = {}
+        self._history_paging: dict[int, Optional[int]] = {}
         if self.state.get('access_token') and self.state.get('username'):
             self._start_ws()
 
@@ -192,6 +194,38 @@ class IMCli:
         self._persist()
         return rendered
 
+    def _pull_conversation_page(
+        self,
+        conversation_id: int,
+        *,
+        limit: int,
+        before_id: Optional[int] = None,
+        mark_read: bool = True,
+    ) -> None:
+        response = self.api.pull_messages(
+            conversation_id,
+            limit=limit,
+            before_id=before_id,
+            mark_read=mark_read,
+        )
+        rendered = self._display_pull_response(response)
+        print(rendered)
+
+        raw_cursor = response.get('next_before_id')
+        try:
+            next_before_id = int(raw_cursor) if raw_cursor is not None else None
+        except (TypeError, ValueError):
+            next_before_id = None
+        self._history_paging[conversation_id] = next_before_id
+
+        rendered_count = len(rendered.get('messages', [])) if isinstance(rendered.get('messages', []), list) else 0
+        if rendered_count == 0:
+            print(f'No older messages remain for conversation {conversation_id}.')
+        elif rendered_count < limit:
+            print(f'End of currently available history for conversation {conversation_id}.')
+        else:
+            print(f'Use: more {conversation_id} {limit}  # load older messages')
+
     def _display_send_response(self, response: dict[str, Any], plaintext: str) -> dict[str, Any]:
         rendered = dict(response)
         data = response.get('data')
@@ -314,6 +348,7 @@ class IMCli:
             self._persist()
             self._stop_ws()
             self._clear_expiry_timers()
+            self._history_paging.clear()
         elif cmd == 'me':
             print(self.api.me())
         elif cmd == 'contacts':
@@ -357,9 +392,21 @@ class IMCli:
         elif cmd == 'open':
             if len(parts) < 2:
                 raise RuntimeError('usage: open <conversation_id> [limit]')
+            conversation_id = int(parts[1])
             limit = int(parts[2]) if len(parts) >= 3 else 20
-            response = self.api.pull_messages(int(parts[1]), limit=limit, mark_read=True)
-            print(self._display_pull_response(response))
+            self._pull_conversation_page(conversation_id, limit=limit, mark_read=True)
+        elif cmd == 'more':
+            if len(parts) < 2:
+                raise RuntimeError('usage: more <conversation_id> [limit]')
+            conversation_id = int(parts[1])
+            limit = int(parts[2]) if len(parts) >= 3 else 20
+            if conversation_id not in self._history_paging:
+                raise RuntimeError(f'no saved paging cursor for conversation {conversation_id}; run: open {conversation_id} [limit] first')
+            before_id = self._history_paging[conversation_id]
+            if before_id is None:
+                print(f'No older messages remain for conversation {conversation_id}.')
+                return
+            self._pull_conversation_page(conversation_id, limit=limit, before_id=before_id, mark_read=True)
         elif cmd == 'send':
             if len(parts) < 3:
                 raise RuntimeError('usage: send <username> <message text>')

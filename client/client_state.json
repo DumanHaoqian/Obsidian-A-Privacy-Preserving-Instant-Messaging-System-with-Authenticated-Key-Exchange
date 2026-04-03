@@ -1,5 +1,5 @@
 {
-  "access_token": "NaRxGYYjMwhMIBaatTvyeyAuU6Y0nSrr-x3w4Qw08EU",
+  "access_token": "wT2EJWkw4_wmxns-73KK6z5To9BBixibo3lybDEAR-s",
   "device_keys": {
     "frank": {
       "device_id": "cli-device-1",
@@ -28,13 +28,15 @@
         },
         "eff925bf3f9ce1363af5162046901bce": {
           "first_seen_at": "2026-04-02T08:47:00.756419+00:00",
-          "last_seen_at": "2026-04-02T08:50:15.066669+00:00",
+          "last_seen_at": "2026-04-03T01:31:49.837466+00:00",
           "message_id": 5
         }
       }
     }
   },
-  "reverify_required_peer_keys": {},
+  "reverify_required_peer_keys": {
+    "nicco": {}
+  },
   "trusted_peer_keys": {
     "frank": {
       "nicco": {
@@ -60,5 +62,7 @@
     }
   },
   "username": "nicco",
-  "verified_peer_keys": {}
+  "verified_peer_keys": {
+    "nicco": {}
+  }
 }

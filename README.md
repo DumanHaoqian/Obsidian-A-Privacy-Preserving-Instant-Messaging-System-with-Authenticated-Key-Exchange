@@ -24,6 +24,7 @@ It does not yet implement TLS or multi-device secure sessions.
 - `Tech_Doc/FINGERPRINT_VERIFICATION_IMPLEMENTATION.md`: manual fingerprint verification design and validation notes
 - `Tech_Doc/TRUST_RESET_IMPLEMENTATION.md`: key-change trust reset design and validation notes
 - `Tech_Doc/BLOCK_CONTACT_MANAGEMENT_IMPLEMENTATION.md`: block / unblock / remove-contact design and validation notes
+- `Tech_Doc/CLI_PAGINATION_IMPLEMENTATION.md`: CLI paging / incremental loading design and validation notes
 
 ## Repository layout
 
@@ -394,6 +395,7 @@ block <username>
 unblock <username>
 conversations
 open <conversation_id> [limit]
+more <conversation_id> [limit]
 send <username> <message text>
 send-ttl <username> <ttl_seconds> <message text>
 fingerprint <username>
@@ -408,7 +410,8 @@ Notes:
 
 - `login` also ensures and republishes the local identity key
 - `send` always encrypts locally first
-- `open` pulls messages and requests `mark_read=true`
+- `open` pulls the newest page of messages and saves the next paging cursor
+- `more` uses the saved cursor to load older messages for the same conversation
 - `store-dev-key` republishes the current local public key and prints the local fingerprint
 
 ## HTTP API summary
