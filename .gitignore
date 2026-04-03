@@ -2,4 +2,6 @@ venv/
 .venv/
 qoder/
 .qoder/
+__pycache__/
+certs/
 Project.pdf

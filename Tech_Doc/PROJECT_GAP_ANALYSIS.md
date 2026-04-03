@@ -4,23 +4,7 @@
 
 ## 还必须做的
 
-### 1. TLS
-
-为什么要做：
-
-- `4.2 Transport security` 和 `7. Security Requirements` 都明确要求 client-server 连接使用 TLS
-
-当前缺口：
-
-- 当前默认仍是 `http://` 和 `ws://`
-- 仓库里没有 TLS 配置
-
-代码证据：
-
-- [client/cli.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/cli.py#L296)
-- [client/ws_client.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/ws_client.py#L22)
-
-### 2. 本地敏感数据安全存储
+### 1. 本地敏感数据安全存储
 
 为什么要做：
 
@@ -28,15 +12,16 @@
 
 当前缺口：
 
-- `client_state.json` 明文保存 OTP secret、token、私钥、trusted peer keys
+- `client_state.json` 仍然明文保存 OTP secret、access token、私钥、trusted peer keys
 
 代码证据：
 
-- [client/state.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/state.py#L9)
-- [client/state.py](d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/state.py#L83)
+- [client/state.py](/d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/state.py#L5)
+- [client/state.py](/d:/Learning/Year3%20Sem2/COMP3334/Project_Code/Code/client/state.py#L72)
 
 ## 已经做了，不用再补的
 
+- TLS 传输安全
 - 注册、密码哈希、登录限流、密码 + OTP 登录、登出
 - 1:1 E2EE 私聊
 - 好友请求发送 / 接受 / 拒绝 / 取消
@@ -61,7 +46,6 @@
 
 ## 最终结论
 
-如果只按 `Project.pdf` 严格看，你现在还必须补这 2 项：
+如果只按 `Project.pdf` 严格看，当前还剩下 1 个明确硬性缺口：
 
-1. TLS
-2. 本地敏感数据安全存储
+1. 本地敏感数据安全存储

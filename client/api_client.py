@@ -4,12 +4,27 @@ from typing import Any, Optional
 
 import httpx
 
+from client.tls import create_ssl_context, normalize_base_url
+
 
 class ApiClient:
-    def __init__(self, base_url: str, access_token: Optional[str] = None) -> None:
-        self.base_url = base_url.rstrip('/')
+    def __init__(
+        self,
+        base_url: str,
+        access_token: Optional[str] = None,
+        *,
+        ca_cert_path: Optional[str] = None,
+        allow_insecure_http: bool = False,
+    ) -> None:
+        self.base_url = normalize_base_url(base_url, allow_insecure_http=allow_insecure_http)
         self.access_token = access_token
-        self.http = httpx.Client(base_url=self.base_url, timeout=15.0)
+        self.ssl_context = create_ssl_context(self.base_url, ca_cert_path)
+        self.http = httpx.Client(
+            base_url=self.base_url,
+            timeout=15.0,
+            verify=self.ssl_context or True,
+            trust_env=False,
+        )
 
     def close(self) -> None:
         self.http.close()

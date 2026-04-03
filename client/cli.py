@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sys
 import threading
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from client.api_client import ApiClient
 from client.e2ee_client import ClientE2EEManager, DuplicateDeliveryError, ReplayAttackError
 from client.otp import totp_now
 from client.state import load_state, save_state
+from client.tls import default_ca_cert_path
 from client.ws_client import WebSocketListener
 from shared.e2ee import E2EE_MESSAGE_TYPE, MAX_TTL_SECONDS, MIN_TTL_SECONDS, TrustError
 
@@ -55,10 +57,23 @@ class ExitRequested(Exception):
 
 
 class IMCli:
-    def __init__(self, base_url: str) -> None:
-        self.base_url = base_url
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        ca_cert_path: Optional[str] = None,
+        allow_insecure_http: bool = False,
+    ) -> None:
         self.state = load_state()
-        self.api = ApiClient(base_url, self.state.get('access_token'))
+        self.api = ApiClient(
+            base_url,
+            self.state.get('access_token'),
+            ca_cert_path=ca_cert_path,
+            allow_insecure_http=allow_insecure_http,
+        )
+        self.base_url = self.api.base_url
+        self.ca_cert_path = ca_cert_path
+        self.allow_insecure_http = allow_insecure_http
         self.e2ee = ClientE2EEManager(self.api, self.state)
         self.ws: Optional[WebSocketListener] = None
         self._expiry_timers: dict[int, threading.Timer] = {}
@@ -71,7 +86,13 @@ class IMCli:
             return
         if self.ws:
             self.ws.stop()
-        self.ws = WebSocketListener(self.base_url, self.api.access_token, self._handle_event)
+        self.ws = WebSocketListener(
+            self.base_url,
+            self.api.access_token,
+            self._handle_event,
+            ca_cert_path=self.ca_cert_path,
+            allow_insecure_http=self.allow_insecure_http,
+        )
         self.ws.start()
 
     def _stop_ws(self) -> None:
@@ -496,8 +517,35 @@ class IMCli:
 
 
 def main() -> None:
-    base_url = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:8000'
-    IMCli(base_url).run()
+    parser = argparse.ArgumentParser(description='COMP3334 IM CLI')
+    parser.add_argument(
+        'base_url',
+        nargs='?',
+        default='https://127.0.0.1:8443',
+        help='Server base URL. HTTPS is required by default.',
+    )
+    parser.add_argument(
+        '--ca-cert',
+        default=None,
+        help='Path to a PEM CA certificate used to verify the HTTPS/WSS server certificate.',
+    )
+    parser.add_argument(
+        '--allow-insecure-http',
+        action='store_true',
+        help='Allow legacy http:// / ws:// transport for local debugging only.',
+    )
+    args = parser.parse_args()
+
+    resolved_default_ca = default_ca_cert_path()
+    selected_ca_cert = args.ca_cert or (str(resolved_default_ca) if resolved_default_ca else None)
+    if selected_ca_cert and not args.allow_insecure_http:
+        print(f'Using TLS CA certificate: {selected_ca_cert}')
+
+    IMCli(
+        args.base_url,
+        ca_cert_path=selected_ca_cert,
+        allow_insecure_http=args.allow_insecure_http,
+    ).run()
 
 
 if __name__ == '__main__':

@@ -14,7 +14,7 @@ The current CLI encrypts message bodies locally before upload and decrypts them 
 For `e2ee_text` messages the server stores ciphertext envelopes, not plaintext.
 
 This is still a prototype, not a full modern messaging protocol.
-It does not yet implement TLS or multi-device secure sessions.
+It now includes TLS transport for client-server connections, but it does not yet implement encrypted local storage or multi-device secure sessions.
 
 ## Companion documents
 
@@ -25,6 +25,7 @@ It does not yet implement TLS or multi-device secure sessions.
 - `Tech_Doc/TRUST_RESET_IMPLEMENTATION.md`: key-change trust reset design and validation notes
 - `Tech_Doc/BLOCK_CONTACT_MANAGEMENT_IMPLEMENTATION.md`: block / unblock / remove-contact design and validation notes
 - `Tech_Doc/CLI_PAGINATION_IMPLEMENTATION.md`: CLI paging / incremental loading design and validation notes
+- `Tech_Doc/TLS_IMPLEMENTATION.md`: TLS transport design, local certificate workflow, and validation notes
 
 ## Repository layout
 
@@ -37,6 +38,7 @@ Code/
 |   |-- e2ee_client.py
 |   |-- otp.py
 |   |-- state.py
+|   |-- tls.py
 |   `-- ws_client.py
 |-- data/
 |   `-- im_phase1.db
@@ -45,13 +47,17 @@ Code/
 |   |-- db.py
 |   |-- main.py
 |   |-- rate_limit.py
+|   |-- run_tls.py
 |   |-- schemas.py
 |   |-- security.py
+|   |-- tls.py
 |   `-- ws_manager.py
 |-- shared/
 |   `-- e2ee.py
 |-- E2EE_IMPLEMENTATION.md
 |-- README.md
+|-- Tech_Doc/
+|   `-- TLS_IMPLEMENTATION.md
 |-- USER_MENU.md
 `-- requirements.txt
 ```
@@ -308,23 +314,31 @@ Remove-Item .\client\client_state.json -Force -ErrorAction SilentlyContinue
 rm -f data/im_phase1.db client/client_state.json
 ```
 
-### 3. Start the server
+### 3. Start the HTTPS/WSS server
 
 ```bash
-uvicorn server.main:app --reload
+python -m server.run_tls
 ```
 
 Default server URL:
 
 ```text
-http://127.0.0.1:8000
+https://127.0.0.1:8443
+```
+
+The local development CA certificate is generated automatically at:
+
+```text
+certs/dev/ca_cert.pem
 ```
 
 ### 4. Start the CLI
 
 ```bash
-python client/cli.py http://127.0.0.1:8000
+python client/cli.py https://127.0.0.1:8443 --ca-cert certs/dev/ca_cert.pem
 ```
+
+If you keep the default certificate location created by `server.run_tls`, the CLI can also auto-discover it and you may omit `--ca-cert`.
 
 ## Basic demo flow
 
@@ -481,6 +495,7 @@ Server-side pushed events currently used by the system:
 - friend request send / accept / decline / cancel
 - block / unblock / remove contact management
 - contacts-only messaging by default
+- HTTPS / WSS transport with certificate verification for the client-server channel
 - sent / delivered status, with delivered triggered by recipient client acknowledgement
 - offline store-and-forward for the current encrypted CLI flow
 - conversation list, unread counters, and basic paging
@@ -493,7 +508,6 @@ Server-side pushed events currently used by the system:
 ### Not implemented yet
 
 - retention cleanup based on `MESSAGE_RETENTION_DAYS`
-- TLS for client-server transport
 - encrypted local storage / OS keychain integration
 - prekeys, double ratchet, forward secrecy, or post-compromise recovery
 - multi-device session support
@@ -511,12 +525,12 @@ Server-side pushed events currently used by the system:
 - `open` marks returned unread messages as read by default.
 - The WebSocket listener retries on connection errors and clears the local session if reconnect fails with authentication errors.
 - `MESSAGE_RETENTION_DAYS = 7` exists in config but is not currently enforced as a general max-age retention rule in the server logic.
-- There is no TLS configuration in this repository. Use `http://` / `ws://` for local development only.
+- Local development TLS uses a generated CA plus a leaf certificate for `localhost` / `127.0.0.1`; production deployment would still need a properly managed certificate chain.
 
 ## What to build next
 
 The most important missing items for the course project are:
 
-1. TLS for transport security
-2. secure local storage for client secrets and private keys
-3. stronger forward-secrecy-oriented session design
+1. secure local storage for client secrets and private keys
+2. stronger forward-secrecy-oriented session design
+3. richer multi-device key management

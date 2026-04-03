@@ -7,15 +7,25 @@ from typing import Callable, Optional
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from websockets.sync.client import connect
+from client.tls import create_ssl_context, normalize_base_url
 
 EventHandler = Callable[[dict], None]
 
 
 class WebSocketListener:
-    def __init__(self, http_base_url: str, access_token: str, on_event: EventHandler) -> None:
-        self.http_base_url = http_base_url.rstrip('/')
+    def __init__(
+        self,
+        http_base_url: str,
+        access_token: str,
+        on_event: EventHandler,
+        *,
+        ca_cert_path: Optional[str] = None,
+        allow_insecure_http: bool = False,
+    ) -> None:
+        self.http_base_url = normalize_base_url(http_base_url, allow_insecure_http=allow_insecure_http)
         self.access_token = access_token
         self.on_event = on_event
+        self.ssl_context = create_ssl_context(self.http_base_url, ca_cert_path)
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
 
@@ -45,7 +55,7 @@ class WebSocketListener:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                with connect(self._ws_url(), open_timeout=5) as websocket:
+                with connect(self._ws_url(), open_timeout=5, ssl=self.ssl_context, proxy=None) as websocket:
                     while not self._stop.is_set():
                         try:
                             message = websocket.recv(timeout=1)

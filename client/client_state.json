@@ -1,5 +1,5 @@
 {
-  "access_token": "wT2EJWkw4_wmxns-73KK6z5To9BBixibo3lybDEAR-s",
+  "access_token": "-gc7bMI2UraauYvz49oOobG75DoiKAKI0O-RPY9mT0g",
   "device_keys": {
     "frank": {
       "device_id": "cli-device-1",
@@ -21,6 +21,11 @@
   "replay_cache": {
     "nicco": {
       "frank": {
+        "003971c65bd31349a4007ce2762389b7": {
+          "first_seen_at": "2026-04-03T02:05:46.987909+00:00",
+          "last_seen_at": "2026-04-03T02:08:15.280109+00:00",
+          "message_id": 7
+        },
         "5e26b15f03f2ae1aa74def93056cdf3e": {
           "first_seen_at": "2026-04-02T08:49:33.647219+00:00",
           "last_seen_at": "2026-04-02T08:49:44.487643+00:00",
@@ -28,7 +33,7 @@
         },
         "eff925bf3f9ce1363af5162046901bce": {
           "first_seen_at": "2026-04-02T08:47:00.756419+00:00",
-          "last_seen_at": "2026-04-03T01:31:49.837466+00:00",
+          "last_seen_at": "2026-04-03T02:08:15.280109+00:00",
           "message_id": 5
         }
       }

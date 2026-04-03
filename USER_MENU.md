@@ -129,7 +129,6 @@ D:\Learning\Year3 Sem2\COMP3334\Project_Code\Code
 
 以下能力在 README 和代码中都明确还没完成：
 
-- TLS 部署
 - 多设备安全会话
 - 本地状态加密 / keychain 集成
 
@@ -141,18 +140,20 @@ D:\Learning\Year3 Sem2\COMP3334\Project_Code\Code
 
 ```powershell
 cd "D:\Learning\Year3 Sem2\COMP3334\Project_Code\Code"
-.\.venv\Scripts\python.exe -m uvicorn server.main:app --reload
+.\.venv\Scripts\python.exe -m server.run_tls
 ```
 
 预期输出：
 
 ```text
-INFO:     Uvicorn running on http://127.0.0.1:8000
+TLS CA certificate: D:\Learning\Year3 Sem2\COMP3334\Project_Code\Code\certs\dev\ca_cert.pem
+Starting HTTPS/WSS server on https://127.0.0.1:8443
 ```
 
 解释：
 
-- 说明 FastAPI 服务已经启动，默认监听 `127.0.0.1:8000`
+- 说明 FastAPI 服务已经启动，默认监听 `127.0.0.1:8443`
+- `certs\dev\ca_cert.pem` 是本地开发 CA 证书，CLI 需要用它校验服务端证书
 - 第一次启动时会自动建库
 
 ### 3.2 启动客户端
@@ -161,13 +162,14 @@ INFO:     Uvicorn running on http://127.0.0.1:8000
 
 ```powershell
 cd "D:\Learning\Year3 Sem2\COMP3334\Project_Code\Code"
-.\.venv\Scripts\python.exe client\cli.py http://127.0.0.1:8000
+.\.venv\Scripts\python.exe client\cli.py https://127.0.0.1:8443 --ca-cert certs\dev\ca_cert.pem
 ```
 
 预期输出：
 
 ```text
-Connected to http://127.0.0.1:8000
+Using TLS CA certificate: certs\dev\ca_cert.pem
+Connected to https://127.0.0.1:8443
 Commands:
   help
   register <username> <password>
@@ -204,9 +206,11 @@ Commands:
 
 解释：
 
-- `Connected to ...` 表示 CLI 已连上 HTTP 服务
+- `Connected to ...` 表示 CLI 已通过 HTTPS 连上服务端
+- `Using TLS CA certificate...` 表示 CLI 会校验服务端证书，而不是盲目信任自签名证书
 - `Commands:` 是命令菜单
 - `[push] system...` 表示 WebSocket 也自动连接成功，当前已有登录态
+- 如果你仍然传入 `http://...`，CLI 默认会拒绝启动；只有显式加 `--allow-insecure-http` 才会允许旧的明文模式
 
 ## 4. 命令总览
 
@@ -1786,4 +1790,5 @@ Remove-Item .\client\client_state.json -Force -ErrorAction SilentlyContinue
 
 但它仍是课程原型，不应被误认为已经完成真正的安全即时通信系统。当前最重要的缺口仍然是：
 
-- 没有 TLS
+- 本地状态加密 / keychain 集成
+- 更强的前向保密 / 多设备会话设计
