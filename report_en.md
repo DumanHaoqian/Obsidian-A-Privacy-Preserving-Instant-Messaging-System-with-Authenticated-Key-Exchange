@@ -8,11 +8,11 @@
 **Submission Date:** April 2026
 
 **Team Members:**
-FENG Luquan:
+FENG Luquan: 23100577D
 YANG Shu: 23098979D
-LIU Chen:
-DU Haoqian:
-Du Haoyang
+LIU Chen: 22100974D
+DU Haoqian: 23098841D
+Du Haoyang: 23100929D
 
 ---
 
@@ -842,6 +842,443 @@ Both tests passed:
 - Ensures confidentiality and integrity of client-server communication
 - Prevents network-level man-in-the-middle attacks
 - Provides secure transmission foundation for end-to-end encryption
+
+---
+
+## Appendix A: Project Requirements Checklist (R1-R25)
+
+### A.1 User Authentication
+
+#### (R1) Registration
+- Users register with unique username and password
+- Passwords hashed using Argon2 with per-user salt
+- Rate limiting applied to registration endpoint
+
+#### (R2) Login with Password + OTP
+- Two-factor authentication: password + TOTP
+- Session tokens expire after 12 hours
+- Tokens bound to authenticated user
+
+#### (R3) Logout / Session Invalidation
+- Users can explicitly logout
+- Tokens are removed from server database
+- Immediate session invalidation
+
+### A.2 Identity & Key Management
+
+#### (R4) Per-device Identity Keypair
+- Each client generates X25519 keypair locally
+- Private keys stored only in client state file
+- Server stores only public keys for session establishment
+
+#### (R5) Fingerprint / Verification UI
+- SHA-256 hash of public key displayed as fingerprint
+- Users can mark contacts as "verified" locally
+- Verification status stored in client state
+
+#### (R6) Key Change Detection
+- Client detects when contact's public key changes
+- Warning displayed to user about key change
+- Policy: Allow with warning, require re-verification
+
+### A.3 E2EE 1:1 Messaging
+
+#### (R7) Secure Session Establishment
+- X25519 elliptic curve Diffie-Hellman key exchange
+- HKDF-SHA256 for key derivation
+- Static keys with per-message salt for security
+
+#### (R8) Message Encryption and Authentication
+- AES-GCM (256-bit) for authenticated encryption
+- Metadata bound using Additional Authenticated Data (AAD)
+- Includes sender/receiver IDs, message type, replay token
+
+#### (R9) Replay Protection / De-duplication
+- 32-byte replay tokens included in each message
+- Client maintains replay cache of seen tokens
+- Messages with duplicate tokens are rejected
+
+### A.4 Timed Self-Destruct Messages
+
+#### (R10) TTL / Expiration Policy
+- Messages can have configurable TTL (seconds)
+- TTL included in authenticated metadata
+- Server and client both enforce expiration
+
+#### (R11) Client Deletion Behavior
+- Expired messages removed from UI and local storage
+- Automatic cleanup on client startup and message fetch
+- Messages with expired TTL not displayed
+
+- Client: `client/cli.py` - message filtering logic
+- Display: `client/cli.py` - `open_conversation()` function
+- Storage: `client/client_state.json` - periodic cleanup
+
+#### (R12) Server Storage Behavior (Best-effort)
+**Implementation Summary:**
+- Server deletes expired ciphertext from database
+- Best-effort cleanup via background task
+- Respects TTL for queued offline messages
+
+**How Implemented:**
+- Background cleanup runs every 5 minutes
+- Deletes messages where expires_at < current_time
+- Also cleans up expired sessions and challenges
+
+**Limitations:**
+- Best-effort: cleanup may be delayed
+- Cannot prevent client-side screenshots
+- Relies on server behaving correctly
+
+**Code Location:**
+- Server: `server/main.py` - cleanup background task
+- Database: `server/db.py` - `cleanup_expired_messages()`
+- Policy: `server/main.py` - startup event triggers cleanup
+
+### A.5 Friends / Contacts
+
+#### (R13) Friend Request Workflow
+**Implementation Summary:**
+- Users send friend requests by username
+- Requests must be accepted/declined (not instant adding)
+- Mutual consent required for contact relationship
+
+**How Implemented:**
+- `POST /friend-requests` to send requests
+- `GET /friend-requests` to view pending
+- `POST /friend-requests/{id}/respond` to accept/decline
+
+**Related Commands:**
+```bash
+# Send friend request
+im> send-request bob
+
+# View pending requests
+im> pending
+
+# Accept request (ID 1)
+im> respond 1 accept
+```
+
+**Code Location:**
+- Server: `server/main.py` - friend request endpoints
+- Database: `server/db.py` - contacts and friend_requests tables
+- Client: `client/cli.py` - friend request commands
+
+#### (R14) Request Lifecycle
+**Implementation Summary:**
+- Senders can cancel pending requests
+- Receivers can accept or decline
+- Both parties can view pending status
+
+**How Implemented:**
+- Request states: pending, accepted, declined, cancelled
+- `DELETE /friend-requests/{id}` for cancellation
+- Status updates reflected in real-time
+
+**Related Commands:**
+```bash
+# Cancel sent request
+im> cancel-request 1
+
+# Decline received request
+im> respond 1 decline
+
+# View all pending requests
+im> pending
+```
+
+**Code Location:**
+- Server: `server/main.py` - request lifecycle management
+- Database: `server/db.py` - friend_requests table status tracking
+- Client: `client/cli.py` - request management commands
+
+#### (R15) Blocking / Removing
+**Implementation Summary:**
+- Users can block other users
+- Blocked users' messages and requests are ignored
+- Can remove friends (deletes contact relationship)
+
+**How Implemented:**
+- Block list stored in database
+- Server filters messages from blocked users
+- Remove friend deletes contact relationship
+
+**Related Commands:**
+```bash
+# Block a user
+im> block bob
+
+# View blocked users
+im> blocked
+
+# Unblock a user
+im> unblock bob
+
+# Remove friend
+im> remove-friend bob
+```
+
+**Code Location:**
+- Server: `server/main.py` - block/unblock endpoints
+- Database: `server/db.py` - blocked_users table
+- Client: `client/cli.py` - blocking commands
+
+#### (R16) Default Anti-spam Control
+**Implementation Summary:**
+- Non-friends cannot send chat messages by default
+- Only friend requests allowed from non-contacts
+- Rate limiting prevents spam
+
+**Implementation Justification:**
+- Prevents unsolicited messages
+- Reduces spam and abuse potential
+- Encourages proper friend request workflow
+
+**How Implemented:**
+- Server checks contact relationship before accepting messages
+- `POST /messages/send` validates sender-receiver are contacts
+- Rate limiting on message endpoints
+
+**Code Location:**
+- Server: `server/main.py` - message sending validation
+- Policy: `server/main.py` - contact relationship checks
+- Security: `server/rate_limiting.py` - anti-spam measures
+
+### A.6 Message Delivery Status
+
+#### (R17) Minimum Delivery States
+**Implementation Summary:**
+- **Sent**: Message successfully submitted to server
+- **Delivered**: Message forwarded to recipient's active connection
+
+**How Implemented:**
+- Server returns "sent" status after storing message
+- WebSocket push marks message as "delivered"
+- Status stored in database messages table
+
+**Related Commands:**
+```bash
+# Status is automatic, no direct command
+# View message status in conversation
+im> open 1
+```
+
+**Code Location:**
+- Server: `server/main.py` - message status tracking
+- Database: `server/db.py` - messages.status field
+- WebSocket: `server/ws_manager.py` - delivery notifications
+
+#### (R18) Define "Delivered" Semantics
+**Implementation Summary:**
+- **Option A (Implemented)**: Delivered = server placed ciphertext in recipient's queue or forwarded to active connection
+- Simple, efficient, and sufficient for HbC model
+
+**Implementation Details:**
+- Server marks message as "delivered" after:
+  - Storing in database (for offline users)
+  - Sending via WebSocket (for online users)
+- No client acknowledgment required
+
+**Why Option A:**
+- Simpler implementation
+- Sufficient for HbC server model
+- Reduces metadata leakage (no ack messages)
+- Better performance (fewer round trips)
+
+**Code Location:**
+- Server: `server/main.py` - delivery status logic
+- WebSocket: `server/ws_manager.py` - online delivery
+- Database: `server/db.py` - status updates
+
+#### (R19) Metadata Disclosure Statement
+**Implementation Summary:**
+- Server learns: message timing, delivery status, online/offline status
+- Metadata: sender/receiver usernames, timestamps, message size
+- Limited exposure due to E2EE of content
+
+**Server Learns:**
+- **From "Delivered"**: When recipient is online, approximate online times
+- **From Message Storage**: Communication patterns, frequency, timing
+- **From Status Updates**: When users are active vs offline
+
+**Mitigation:**
+- Content remains encrypted (E2EE)
+- No message content exposed
+- Metadata leakage is unavoidable under HbC model
+
+**Code Location:**
+- Analysis: `report_cn.md` and `report_en.md` - metadata analysis sections
+- Server: `server/main.py` - all endpoints that log/track metadata
+
+### A.7 Offline Messaging (Ciphertext Store-and-Forward)
+
+#### (R20) Offline Ciphertext Queue
+**Implementation Summary:**
+- Server queues messages for offline recipients
+- Messages stored as encrypted ciphertext
+- Delivered when recipient comes online
+
+**How Implemented:**
+- Messages stored in database regardless of online status
+- WebSocket connection established on client login
+- Server pushes queued messages via WebSocket
+
+**Related Commands:**
+```bash
+# Automatic behavior
+# Messages queued when recipient offline
+# Delivered on next login
+im> login bob StrongPass123  # Triggers delivery of queued messages
+```
+
+**Code Location:**
+- Server: `server/main.py` - message storage and WebSocket delivery
+- Database: `server/db.py` - messages table with offline queue flag
+- WebSocket: `server/ws_manager.py` - queued message delivery
+
+#### (R21) Retention and Cleanup
+**Implementation Summary:**
+- Messages retained until delivery or TTL expiration
+- Background cleanup removes expired messages
+- TTL respected for queued ciphertext
+
+**Retention Policy:**
+- **Normal Messages**: Retained until delivered
+- **TTL Messages**: Deleted after expires_at time
+- **Cleanup Frequency**: Every 5 minutes
+- **Max Age**: TTL-based, no permanent storage
+
+**How Implemented:**
+- `cleanup_expired_messages()` runs periodically
+- Deletes messages where expires_at < now()
+- Also cleans up orphaned offline messages
+
+**Code Location:**
+- Server: `server/main.py` - cleanup background task
+- Database: `server/db.py` - cleanup functions
+- Policy: `server/main.py` - startup and periodic cleanup
+
+#### (R22) Duplicate/Replay Robustness
+**Implementation Summary:**
+- Clients handle duplicate messages gracefully
+- Replay protection prevents accepting old ciphertext as new
+- Robust handling of network retries and reconnections
+
+**How Implemented:**
+- Replay cache prevents duplicate processing
+- Duplicate delivery detection for WebSocket reconnections
+- Message IDs prevent confusion
+
+**Robustness Features:**
+- Idempotent message processing
+- Duplicate detection and ignore
+- Replay token validation
+
+**Code Location:**
+- Client: `client/e2ee.py` - replay protection
+- Tests: `tests/test_replay_protection.py` - comprehensive tests
+- WebSocket: `client/ws_client.py` - duplicate handling
+
+### A.8 Conversation List & Unread Counters
+
+#### (R23) Conversation List
+**Implementation Summary:**
+- Shows list of conversations with contacts
+- Ordered by most recent activity
+- Includes last message time and preview
+
+**How Implemented:**
+- Database query for conversations with message activity
+- Sort by last message timestamp (descending)
+- Display contact name and last message preview
+
+**Related Commands:**
+```bash
+# Show conversation list
+im> conversations
+
+# Shows: ID, Contact, Last Message, Time, Unread Count
+```
+
+**Code Location:**
+- Server: `server/main.py` - `GET /conversations` endpoint
+- Database: `server/db.py` - conversation query functions
+- Client: `client/cli.py` - `conversations()` command
+
+#### (R24) Unread Counters
+**Implementation Summary:**
+- Maintains unread count per conversation
+- Updates when messages are marked as read
+- Displayed in conversation list
+
+**How Implemented:**
+- Database tracks is_read flag per message
+- Unread count = COUNT(*) WHERE is_read = 0
+- Mark as read updates database flags
+
+**Related Commands:**
+```bash
+# Mark conversation as read
+im> mark-read 1
+
+# View unread counts in conversation list
+im> conversations
+```
+
+**Code Location:**
+- Server: `server/main.py` - `POST /messages/{id}/ack` endpoint
+- Database: `server/db.py` - message read status tracking
+- Client: `client/cli.py` - unread count calculation
+
+#### (R25) Paging / Incremental Loading
+**Implementation Summary:**
+- Basic pagination for message history
+- Loads messages in batches to avoid memory issues
+- Supports loading older messages on demand
+
+**How Implemented:**
+- `GET /messages/{conversation_id}?limit=N&offset=M`
+- Default loads 20 most recent messages
+- Can specify limit and offset for pagination
+
+**Related Commands:**
+```bash
+# Open conversation with pagination
+im> open 1          # Loads 20 most recent
+im> open 1 50       # Loads 50 messages
+im> open 1 20 40    # Loads 20 messages starting from offset 40
+```
+
+**Code Location:**
+- Server: `server/main.py` - `GET /messages/{conversation_id}` endpoint
+- Database: `server/db.py` - paginated message queries
+- Client: `client/cli.py` - pagination support in `open_conversation()`
+
+---
+
+## Summary
+
+**Total Requirements:** 25  
+**Implemented:** 25  
+**Partially Implemented:** 0  
+**Not Implemented:** 0  
+
+All requirements (R1-R25) have been fully implemented in the Obsidian instant messaging system. The implementation provides a complete end-to-end encrypted messaging platform with modern security features, user management, and robust message delivery mechanisms.
+
+**Key Security Achievements:**
+- End-to-end encryption using X25519 + HKDF-SHA256 + AES-GCM
+- Server cannot access message content
+- Replay attack protection
+- Man-in-the-middle attack prevention
+- Secure user authentication with 2FA
+- Privacy-preserving offline messaging
+
+**Implementation Quality:**
+- Comprehensive test coverage for security features
+- Clean separation of concerns between client and server
+- Well-documented protocol and security analysis
+- User-friendly CLI interface with all required features
 
 ---
 
